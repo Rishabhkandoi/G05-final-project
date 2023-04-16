@@ -44,7 +44,7 @@ new_df_station.printSchema()
 
 # COMMAND ----------
 
-new_df_station_filter = new_df_station.filter((col("name") == "University Pl & E 14 St"))
+new_df_station_filter = new_df_station.filter((col("name") == GROUP_STATION_ASSIGNMENT))
 display(new_df_station_filter)
 
 # COMMAND ----------
@@ -64,7 +64,7 @@ trial = new_df_station_filter.select(
     col('name').alias('station_name'),
     col('short_name').alias('station_id'),
     'lat', 
-    'lon', 
+    col('lon').alias('lng'), 
     col('bikes_available').alias('avail')
 )
 trial = trial.withColumn("diff", col("in") - col("out"))
@@ -78,7 +78,7 @@ bike_bronze = trial.select(
     'station_name',
     'station_id',
     'lat', 
-    'lon', 
+    'lng', 
     'diff',
     'avail'
 )
@@ -213,7 +213,7 @@ display(bike_trip_df)
 # COMMAND ----------
 
 # First subset for start_station = University
-bike_start = bike_trip_df.filter((col("start_station_name") == "University Pl & E 14 St")).select(
+bike_start = bike_trip_df.filter((col("start_station_name") == GROUP_STATION_ASSIGNMENT)).select(
     "ride_id", "rideable_type", "started_at", "start_station_name", "start_station_id", "start_lat", "start_lng","member_casual")
 
 sorted_bike_start = bike_start.orderBy(col("started_at").desc())
@@ -236,7 +236,7 @@ display(hourly_counts_start)
 # COMMAND ----------
 
 # Second subset for end_station = University
-bike_end = bike_trip_df.filter((col("end_station_name") == "University Pl & E 14 St")).select(
+bike_end = bike_trip_df.filter((col("end_station_name") == GROUP_STATION_ASSIGNMENT)).select(
     "ride_id", "rideable_type", "ended_at", "end_station_name", "end_station_id", "end_lat", "end_lng","member_casual")
 
 sorted_bike_end = bike_end.orderBy(col("ended_at"))
@@ -318,10 +318,10 @@ display(final_bike_trip)
 # COMMAND ----------
 
 # filling in values for each row
-final_bike_trip = final_bike_trip.withColumn("station_name", lit("University Pl & E 14 St")) \
+final_bike_trip = final_bike_trip.withColumn("station_name", lit(GROUP_STATION_ASSIGNMENT)) \
                                  .withColumn("station_id", lit("5905.14")) \
-                                 .withColumn("lat", lit("40.734814")) \
-                                 .withColumn("lng", lit("-73.992085"))
+                                 .withColumn("lat", lit("40.734814").cast("double")) \
+                                 .withColumn("lng", lit("-73.992085").cast("double"))
 
 display(final_bike_trip)
 
@@ -413,6 +413,55 @@ final_bike_historic_trial = final_bike_historic
 
 # COMMAND ----------
 
+# Create a checkpoint folder
+CHECKPOINT_DIR = GROUP_DATA_PATH + "/checkpoints"
+dbutils.fs.mkdirs(CHECKPOINT_DIR)
+
+# COMMAND ----------
+
+TABLES_DIR = GROUP_DATA_PATH + "/tables"
+dbutils.fs.mkdirs(TABLES_DIR)
+
+# COMMAND ----------
+
+TABLE_NAME = GROUP_DB_NAME + ".bikeinventoryinfo"
+
+(final_bike_historic_trial
+ .write
+ .format("delta")
+ .mode("ignore")
+ .saveAsTable(TABLE_NAME)
+)
+
+# COMMAND ----------
+
+(bike_bronze_trial.writeStream
+ .format("delta")
+ .trigger(once = True)
+ .option("checkpointLocation", CHECKPOINT_DIR)
+ .toTable(TABLE_NAME)
+ .start()
+ .awaitTermination()
+)
+
+# COMMAND ----------
+
+display(spark.read.format("delta").table(TABLE_NAME).sort(-col("hour_window")))
+
+# COMMAND ----------
+
+display(spark.read.format("delta").table(TABLE_NAME))
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
 #merged_df = final_bike_historic_trial.union(bike_bronze_trial)
 
 # COMMAND ----------
@@ -434,20 +483,20 @@ final_bike_historic_trial = final_bike_historic
 
 # COMMAND ----------
 
-dbutils.widgets.text("01.start_date", "2023-04-10", "Start Date")
-dbutils.widgets.text("02.end_date", "2023-05-06", "End Date")
-dbutils.widgets.text("03.hours_to_forecast", "6", "Hours Forecast")
-dbutils.widgets.text("04.promote_model", "yes", "Promote Model")
+# dbutils.widgets.text("01.start_date", "2023-04-10", "Start Date")
+# dbutils.widgets.text("02.end_date", "2023-05-06", "End Date")
+# dbutils.widgets.text("03.hours_to_forecast", "6", "Hours Forecast")
+# dbutils.widgets.text("04.promote_model", "yes", "Promote Model")
 
 # COMMAND ----------
 
-start_date = str(dbutils.widgets.get('01.start_date'))
-end_date = str(dbutils.widgets.get('02.end_date'))
-hours_to_forecast = int(dbutils.widgets.get('03.hours_to_forecast'))
-promote_model = bool(True if str(dbutils.widgets.get('04.promote_model')).lower() == 'yes' else False)
+# start_date = str(dbutils.widgets.get('01.start_date'))
+# end_date = str(dbutils.widgets.get('02.end_date'))
+# hours_to_forecast = int(dbutils.widgets.get('03.hours_to_forecast'))
+# promote_model = bool(True if str(dbutils.widgets.get('04.promote_model')).lower() == 'yes' else False)
 
-print(start_date,end_date,hours_to_forecast, promote_model)
-print("YOUR CODE HERE...")
+# print(start_date,end_date,hours_to_forecast, promote_model)
+# print("YOUR CODE HERE...")
 
 # COMMAND ----------
 
