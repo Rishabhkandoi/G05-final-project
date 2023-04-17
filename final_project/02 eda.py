@@ -9,6 +9,10 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+from pyspark.sql.functions import *
+from pyspark.sql import functions as F
+
+
 
 # COMMAND ----------
 
@@ -29,38 +33,25 @@ df_bike_trip = spark.read.option("inferSchema", "true").option("header", "true")
 df_nyc_weather = spark.read.option("inferSchema", "true").option("header", "true").format("csv").load(NYC_WEATHER_FILE_PATH)
 relevant_bike_df = df_bike_trip.filter((df_bike_trip["start_station_name"] == GROUP_STATION_ASSIGNMENT) | (df_bike_trip["end_station_name"] == GROUP_STATION_ASSIGNMENT))
 
-
 df_nyc_weather = df_nyc_weather.withColumn("dt", col("dt").cast("long"))
 df_nyc_weather = df_nyc_weather.withColumn("dt", date_format(from_unixtime(col("dt")), "yyyy-MM-dd HH:mm:ss"))
-
-
-
-# COMMAND ----------
-
 # First subset for start_station = University
 bike_start = df_bike_trip.filter((col("start_station_name") == "University Pl & E 14 St")).select(
     "ride_id", "rideable_type", "started_at", "start_station_name", "start_station_id", "start_lat", "start_lng","member_casual")
 
-sorted_bike_start = bike_start.orderBy(col("started_at").desc())
-
-display(sorted_bike_start)
-
-# COMMAND ----------
-
 # First subset for start_station = University
 bike_end = df_bike_trip.filter((col("end_station_name") == "University Pl & E 14 St")).select(
     "ride_id", "rideable_type", "ended_at", "end_station_name", "end_station_id", "end_lat", "end_lng","member_casual")
-
-sorted_bike_end = bike_end.orderBy(col("ended_at").desc())
-
+bike_end = bike_end.withColumnRenamed("ended_at", "started_at").withColumnRenamed("end_station_name", "start_station_name").withColumnRenamed("end_station_id", "start_station_id").withColumnRenamed("end_lat", "start_lat").withColumnRenamed("end_lng", "start_lng")
+    
 display(bike_end)
 
-# COMMAND ----------
-
 relevant_bike_df = bike_end.union(bike_start)
-relevant_bike_df = relevant_bike_df.withColumn('year',year(relevant_bike_df["ended_at"])).withColumn('month',month(relevant_bike_df["ended_at"])).withColumn('dom',dayofmonth(relevant_bike_df["ended_at"]))
+relevant_bike_df = relevant_bike_df.withColumn('year',year(relevant_bike_df["started_at"])).withColumn('month',month(relevant_bike_df["started_at"])).withColumn('dom',dayofmonth(relevant_bike_df["started_at"]))
 relevant_bike_df = relevant_bike_df.withColumn("year_month",concat_ws("-",relevant_bike_df.year,relevant_bike_df.month))
 relevant_bike_df = relevant_bike_df.withColumn("simple_dt",concat_ws("-",relevant_bike_df.year_month,relevant_bike_df.dom))
+relevant_bike_df = relevant_bike_df.withColumn('Hour', hour(relevant_bike_df.started_at))
+display(relevant_bike_df)
 
 # COMMAND ----------
 
@@ -71,6 +62,17 @@ month_trips= relevant_bike_df.groupBy('year_month').agg(count('ride_id'))
 month_df = month_trips.toPandas()
 
 fig = px.bar(month_df, x='year_month', y='count(ride_id)')
+fig.show()
+
+# COMMAND ----------
+
+# What are the monthly trip trends for your assigned station?
+#Create a new column of year-month that aggregates the date as year_month for viz
+hour_trips= relevant_bike_df.groupBy('Hour').agg(count('ride_id'))
+#month_trips = month_trips.withColumn("sort_col",concat_ws("-",month_trips.year_month,lit(1)))
+hour_df = hour_trips.toPandas()
+
+fig = px.bar(hour_df, x='Hour', y='count(ride_id)')
 fig.show()
 
 # COMMAND ----------
@@ -112,17 +114,31 @@ fig.show()
 
 # COMMAND ----------
 
-
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
 df_nyc_weather = df_nyc_weather.withColumn('year',year(df_nyc_weather["dt"])).withColumn('month',month(df_nyc_weather["dt"])).withColumn('dom',dayofmonth(df_nyc_weather["dt"]))
 df_nyc_weather = df_nyc_weather.withColumn("year_month",concat_ws("-",df_nyc_weather.year,df_nyc_weather.month))
 df_nyc_weather = df_nyc_weather.withColumn("simple_dt",concat_ws("-",df_nyc_weather.year_month,df_nyc_weather.dom))
+
+# COMMAND ----------
+
+df_nyc_weather = df_nyc_weather.withColumn('Hour', hour(df_nyc_weather.dt))
+
+# COMMAND ----------
+
+
+df_nyc_weather_pd = df_nyc_weather.toPandas()
+weather_hour = df_nyc_weather_pd.groupby('Hour').agg(avg_temp=('feels_like', np.mean),
+                                                     avg_uvi=('uvi', np.mean),
+                                                     avg_ws=('wind_speed', np.mean),
+                                                     avg_humidity=('humidity', np.mean),
+                                                     avg_pressure=('pressure', np.mean),
+                                                     avg_clouds=('clouds', np.mean),
+                                                     avg_visibility=('visibility', np.mean),
+                                                     avg_rain_1h=('rain_1h', np.mean),
+                                                     avg_snow_1h=('snow_1h', np.mean),
+                                                     avg_wind_deg=('wind_deg', np.mean),
+                                                     avg_dew_point=('dew_point', np.mean))
+final_df_hr = hour_df.join(weather_hour,on="Hour")
+
 
 # COMMAND ----------
 
@@ -156,10 +172,6 @@ fig.show()
 
 
 
-# COMMAND ----------
-
-
-
 """fig = go.Figure()
 fig = px.line(final_df, x='simple_dt', y='avg_temp')
 fig.add_bar(x=final_df.simple_dt, y=final_df['count(ride_id)'])
@@ -167,8 +179,8 @@ fig.show()"""
 
 fig = go.Figure()
 fig.add_trace(go.Bar(x=final_df.simple_dt, y=final_df['count(ride_id)'],
-                     name="yaxis1", yaxis='y1'))
-fig.add_trace(go.Line(x=final_df.simple_dt, y=final_df.avg_uvi,name="yaxis2", yaxis="y2"))
+                     name="Daily trips", yaxis='y1'))
+fig.add_trace(go.Line(x=final_df.simple_dt, y=final_df.avg_uvi,name="Temperature", yaxis="y2"))
 
 # Create axis objects
 fig.update_layout(
@@ -176,20 +188,20 @@ fig.update_layout(
 
 # create first y axis
 yaxis=dict(
-   title="yaxis1 title",
+   title="Daily ride",
    titlefont=dict(color="green"),
    tickfont=dict(color="blue")
 ),
 
 # Create second y axis
 yaxis2=dict(
-   title="yaxis2 title",
+   title="Avg. Temperature",
    overlaying="y",
    side="right",
    position=1)
 )
 
-fig.update_layout(title_text="Secondary Y-axis",
+fig.update_layout(title_text="Daily Trips Vs. Avg. daily Temperature",
 width=716, height=400)
 fig.show()
 
