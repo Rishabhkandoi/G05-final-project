@@ -3,23 +3,192 @@
 
 # COMMAND ----------
 
-station_df = spark.readStream.format("delta").option("ignoreChanges", "true").load(BRONZE_STATION_INFO_PATH)
-station_status_df = spark.readStream.format("delta").option("ignoreChanges", "true").load(BRONZE_STATION_STATUS_PATH)
-weather_df = spark.readStream.format("delta").option("ignoreChanges", "true").load(BRONZE_NYC_WEATHER_PATH)
+# Create directories
+
+# Creating Bronze/Silver/Gold Driectories
+BRONZE_DIR = GROUP_DATA_PATH + "/bronze"
+SILVER_DIR = GROUP_DATA_PATH + "/silver"
+GOLD_DIR = GROUP_DATA_PATH + "/gold"
+
+# Creating bronze storage structure
+REAL_TIME_STATION_STATUS_DELTA_DIR = BRONZE_DIR + "/real_time_station_status"
+REAL_TIME_STATION_INFO_DELTA_DIR = BRONZE_DIR + "/real_time_station_info"
+REAL_TIME_WEATHER_DELTA_DIR = BRONZE_DIR + "/real_time_weather"
+HISTORIC_STATION_INFO_DELTA_DIR = BRONZE_DIR + "/historic_station_info"
+HISTORIC_WEATHER_DELTA_DIR = BRONZE_DIR + "/historic_weather"
+
+# Creating checkpoints for bronze data
+REAL_TIME_STATION_STATUS_CHECKPOINT_DIR = REAL_TIME_STATION_STATUS_DELTA_DIR + "/checkpoints"
+REAL_TIME_STATION_INFO_CHECKPOINT_DIR = REAL_TIME_STATION_INFO_DELTA_DIR + "/checkpoints"
+REAL_TIME_WEATHER_CHECKPOINT_DIR = REAL_TIME_WEATHER_DELTA_DIR + "/checkpoints"
+HISTORIC_STATION_INFO_CHECKPOINT_DIR = HISTORIC_STATION_INFO_DELTA_DIR + "/checkpoints"
+HISTORIC_WEATHER_CHECKPOINT_DIR = HISTORIC_WEATHER_DELTA_DIR + "/checkpoints"
+
+# Creating Silver storage structure
+REAL_TIME_INVENTORY_INFO_DELTA_DIR = SILVER_DIR + "/real_time_inventory_info"
+HISTORIC_INVENTORY_INFO_DELTA_DIR = SILVER_DIR + "/historic_inventory_info"
+
+# Creating checkpoints for silver data
+REAL_TIME_INVENTORY_INFO_CHECKPOINT_DIR = REAL_TIME_INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+HISTORIC_INVENTORY_INFO_CHECKPOINT_DIR = HISTORIC_INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+
+# Creating Gold storage structure
+INVENTORY_INFO_DELTA_DIR = GOLD_DIR + "/inventory_info"
+
+# Creating checkpoints for gold data
+INVENTORY_INFO_CHECKPOINT_DIR = INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+
+# Running mkdir for all above directories
+dbutils.fs.mkdirs(BRONZE_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_STATUS_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_WEATHER_DELTA_DIR)
+dbutils.fs.mkdirs(HISTORIC_STATION_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(HISTORIC_WEATHER_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_STATUS_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_INFO_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(REAL_TIME_WEATHER_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(HISTORIC_STATION_INFO_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(HISTORIC_WEATHER_CHECKPOINT_DIR)
+
+dbutils.fs.mkdirs(SILVER_DIR)
+dbutils.fs.mkdirs(REAL_TIME_INVENTORY_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(HISTORIC_INVENTORY_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_INVENTORY_INFO_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(HISTORIC_INVENTORY_INFO_CHECKPOINT_DIR)
+
+dbutils.fs.mkdirs(GOLD_DIR)
+dbutils.fs.mkdirs(INVENTORY_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(INVENTORY_INFO_CHECKPOINT_DIR)
 
 # COMMAND ----------
 
-station_df.printSchema()
-display(station_df)
+# Reading Live Data
+
+station_df = spark\
+    .readStream\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(BRONZE_STATION_INFO_PATH)
+    
+station_status_df = spark\
+    .readStream\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(BRONZE_STATION_STATUS_PATH)
+    
+weather_df = spark\
+    .readStream\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(BRONZE_NYC_WEATHER_PATH)
 
 # COMMAND ----------
 
-station_status_df.printSchema()
-display(station_status_df)
+# To enable inferring schema for historic data when reading with readStream
+
+spark.conf.set("spark.sql.streaming.schemaInference", True)
 
 # COMMAND ----------
 
-from pyspark.sql.functions import col
+# Reading Historical Data
+
+weather_history = spark\
+    .readStream\
+    .option("inferSchema", "true")\
+    .option("header", "true")\
+    .option("ignoreChanges", "true")\
+    .format("csv")\
+    .load(NYC_WEATHER_FILE_PATH)
+    
+station_history = spark\
+    .readStream\
+    .option("inferSchema", "true")\
+    .option("header", "true")\
+    .option("ignoreChanges", "true")\
+    .format("csv")\
+    .load(BIKE_TRIP_DATA_PATH)
+
+# COMMAND ----------
+
+# Storing all bronze tables along with appropriate checkpoints
+
+station_df\
+    .writeStream\
+    .format("delta")\
+    .option("path", REAL_TIME_STATION_INFO_DELTA_DIR)\
+    .option("checkpointLocation", REAL_TIME_STATION_INFO_CHECKPOINT_DIR)\
+    .start()
+
+station_status_df\
+    .writeStream\
+    .format("delta")\
+    .option("path", REAL_TIME_STATION_STATUS_DELTA_DIR)\
+    .option("checkpointLocation", REAL_TIME_STATION_STATUS_CHECKPOINT_DIR)\
+    .start()
+
+weather_df\
+    .writeStream\
+    .format("delta")\
+    .option("path", REAL_TIME_WEATHER_DELTA_DIR)\
+    .option("checkpointLocation", REAL_TIME_WEATHER_CHECKPOINT_DIR)\
+    .start()
+    
+weather_history\
+    .writeStream\
+    .format("delta")\
+    .option("path", HISTORIC_WEATHER_DELTA_DIR)\
+    .option("checkpointLocation", HISTORIC_WEATHER_CHECKPOINT_DIR)\
+    .start()
+    
+station_history\
+    .writeStream\
+    .format("delta")\
+    .option("path", HISTORIC_STATION_INFO_DELTA_DIR)\
+    .option("checkpointLocation", HISTORIC_STATION_INFO_CHECKPOINT_DIR)\
+    .start()
+
+# COMMAND ----------
+
+display(dbutils.fs.ls(HISTORIC_INVENTORY_INFO_DELTA_DIR))
+
+# COMMAND ----------
+
+# Read all bronze tables
+
+station_df = spark\
+    .readStream\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(REAL_TIME_STATION_INFO_DELTA_DIR)
+    
+station_status_df = spark\
+    .readStream\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(REAL_TIME_STATION_STATUS_DELTA_DIR)
+    
+weather_df = spark\
+    .readStream\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(REAL_TIME_WEATHER_DELTA_DIR)
+
+weather_history = spark\
+    .readStream\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(HISTORIC_WEATHER_DELTA_DIR)
+    
+station_history = spark\
+    .readStream\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(HISTORIC_STATION_INFO_DELTA_DIR)
+
+# COMMAND ----------
+
+from pyspark.sql.functions import *
 
 # Join the two dataframes on the 'station_id' column
 new_df_station = station_df.join(station_status_df, 'station_id')
@@ -40,12 +209,11 @@ new_df_station = new_df_station.select(
     'is_returning',
     'last_reported'
 )
-new_df_station.printSchema()
+
 
 # COMMAND ----------
 
 new_df_station_filter = new_df_station.filter((col("name") == GROUP_STATION_ASSIGNMENT))
-display(new_df_station_filter)
 
 # COMMAND ----------
 
@@ -53,7 +221,6 @@ from pyspark.sql.functions import col, from_unixtime, date_format
 
 new_df_station_filter = new_df_station_filter.withColumn("last_reported", col("last_reported").cast("long"))
 new_df_station_filter = new_df_station_filter.withColumn("last_reported", date_format(from_unixtime(col("last_reported")), "yyyy-MM-dd HH:mm:ss"))
-display(new_df_station_filter)
 
 # COMMAND ----------
 
@@ -82,8 +249,6 @@ bike_bronze = trial.select(
     'diff',
     'avail'
 )
-
-display(bike_bronze)
 
 # COMMAND ----------
 
@@ -116,7 +281,6 @@ weather_new = weather_new.withColumn("main", col("weather").getItem(0).getField(
 
 # drop the `weather` column since we no longer need it
 weather_new = weather_new.drop("weather")
-display(weather_new)
 
 # COMMAND ----------
 
@@ -145,8 +309,6 @@ weather_stream = weather_new.select(
     col("icon"),
     col("rain").cast("double")
 )
-
-display(weather_stream)
 
 # COMMAND ----------
 
@@ -188,21 +350,16 @@ rain.1h: double """
 
 # COMMAND ----------
 
-weather_new
-
-# COMMAND ----------
-
 #Historic Bike Trip Data for Model Building (Stream this data source)
 
 # COMMAND ----------
 
-bike_trip_df = spark.read.option("inferSchema", "true").option("header", "true").format("csv").load(BIKE_TRIP_DATA_PATH)
+bike_trip_df = station_history
 
 # COMMAND ----------
 
 from pyspark.sql.functions import col, desc
 bike_trip_df = bike_trip_df.orderBy(col("started_at").desc())
-display(bike_trip_df)
 
 # COMMAND ----------
 
@@ -218,8 +375,6 @@ bike_start = bike_trip_df.filter((col("start_station_name") == GROUP_STATION_ASS
 
 sorted_bike_start = bike_start.orderBy(col("started_at").desc())
 
-display(sorted_bike_start)
-
 # COMMAND ----------
 
 # creating window for every hour from the start date and time
@@ -231,7 +386,7 @@ hourly_counts_start = bike_start \
     .orderBy("hour_window")
 
 hourly_counts_start = hourly_counts_start.withColumn("hour_window", col("hour_window.end"))
-display(hourly_counts_start)
+
 
 # COMMAND ----------
 
@@ -240,7 +395,7 @@ bike_end = bike_trip_df.filter((col("end_station_name") == GROUP_STATION_ASSIGNM
     "ride_id", "rideable_type", "ended_at", "end_station_name", "end_station_id", "end_lat", "end_lng","member_casual")
 
 sorted_bike_end = bike_end.orderBy(col("ended_at"))
-display(sorted_bike_end)
+
 
 # COMMAND ----------
 
@@ -254,7 +409,6 @@ hourly_counts_end = bike_end \
 
 hourly_counts_end = hourly_counts_end.withColumn("hour_window", col("hour_window.end"))
 
-display(hourly_counts_end)
 
 # COMMAND ----------
 
@@ -275,7 +429,7 @@ dummy = spark.range(0, (pd.to_datetime(end_date) - pd.to_datetime(start_date)).t
 dummy = dummy.rdd.map(lambda x: (x[0], x[1] + pd.Timedelta(hours=x[0]), x[2], x[3])).toDF(['index', 'date', 'in', 'out'])
 
 # Show the resulting DataFrame
-display(dummy)
+# display(dummy)
 
 # COMMAND ----------
 
@@ -283,7 +437,7 @@ display(dummy)
 out_dummy = dummy.select('date', 'out')
 # rename the 'date' column in out_dummy to 'hour_window' to match the schema of hourly_counts_starts
 out_dummy = out_dummy.withColumnRenamed('date', 'hour_window')
-display(out_dummy)
+# display(out_dummy)
 
 # COMMAND ----------
 
@@ -291,14 +445,14 @@ display(out_dummy)
 from pyspark.sql.functions import col
 missing_rows_start = out_dummy.join(hourly_counts_start, on='hour_window', how='left_anti')
 hourly_counts_start = hourly_counts_start.union(missing_rows_start.select(hourly_counts_start.columns))
-display(hourly_counts_start)
+# display(hourly_counts_start)
 
 # COMMAND ----------
 
 #re name for in_dummy 
 in_dummy = dummy.select('date','in')
 in_dummy = in_dummy.withColumnRenamed('date', 'hour_window')
-display(in_dummy)
+# display(in_dummy)
 
 # COMMAND ----------
 
@@ -306,14 +460,14 @@ display(in_dummy)
 from pyspark.sql.functions import col
 missing_rows = in_dummy.join(hourly_counts_end, on='hour_window', how='left_anti')
 hourly_counts_end = hourly_counts_end.union(missing_rows.select(hourly_counts_end.columns))
-display(hourly_counts_end)
+# display(hourly_counts_end)
 
 # COMMAND ----------
 
 #merging both the tables
 merged_table = hourly_counts_start.join(hourly_counts_end, on='hour_window', how='inner')
 final_bike_trip = merged_table.orderBy(col("hour_window"))
-display(final_bike_trip)
+# display(final_bike_trip)
 
 # COMMAND ----------
 
@@ -323,14 +477,14 @@ final_bike_trip = final_bike_trip.withColumn("station_name", lit(GROUP_STATION_A
                                  .withColumn("lat", lit("40.734814").cast("double")) \
                                  .withColumn("lng", lit("-73.992085").cast("double"))
 
-display(final_bike_trip)
+# display(final_bike_trip)
 
 # COMMAND ----------
 
 from pyspark.sql.functions import date_format
 # converting to yyyy-MM-dd HH:mm:ss format
 final_bike_trip= final_bike_trip.withColumn("hour_window", date_format("hour_window", "yyyy-MM-dd HH:mm:ss"))
-display(final_bike_trip)
+# display(final_bike_trip)
 
 # COMMAND ----------
 
@@ -343,7 +497,7 @@ df_bike= final_bike_trip
 from pyspark.sql.functions import col, lag, coalesce
 # add a column with the difference between in and out
 df_bike = df_bike.withColumn("diff", col("in") - col("out"))
-display(df_bike)
+# display(df_bike)
 
 # COMMAND ----------
 
@@ -353,7 +507,7 @@ from pyspark.sql import functions as F
 window_val = (Window.partitionBy('station_name').orderBy('hour_window')
              .rangeBetween(Window.unboundedPreceding, 0))
 cumu_sum_diff = df_bike.withColumn('avail', F.sum('diff').over(window_val))
-display(cumu_sum_diff)
+# display(cumu_sum_diff)
 
 # COMMAND ----------
 
@@ -361,7 +515,7 @@ display(cumu_sum_diff)
 from pyspark.sql.functions import lit
 initial_bike = 30
 final_bike_historic = cumu_sum_diff.withColumn("avail", cumu_sum_diff["avail"] + lit(initial_bike))
-display(final_bike_historic)
+# display(final_bike_historic)
 
 # COMMAND ----------
 
@@ -370,7 +524,7 @@ display(final_bike_historic)
 # COMMAND ----------
 
 # Read NYC_WEATHER
-nyc_weather_df = spark.read.option("inferSchema", "true").option("header", "true").format("csv").load(NYC_WEATHER_FILE_PATH)
+nyc_weather_df = weather_history
 
 # COMMAND ----------
 
@@ -378,7 +532,7 @@ from pyspark.sql.functions import col, from_unixtime, date_format
 
 nyc_weather_df = nyc_weather_df.withColumn("dt", col("dt").cast("long"))
 nyc_weather_df = nyc_weather_df.withColumn("dt", date_format(from_unixtime(col("dt")), "yyyy-MM-dd HH:mm:ss"))
-display(nyc_weather_df)
+# display(nyc_weather_df)
 
 # COMMAND ----------
 
@@ -404,7 +558,7 @@ weather_history = nyc_weather_df.select(
     col("rain_1h").alias("rain").cast("double")
 )
 
-display(weather_history)
+# display(weather_history)
 
 # COMMAND ----------
 
@@ -413,52 +567,25 @@ final_bike_historic_trial = final_bike_historic
 
 # COMMAND ----------
 
-# Create a checkpoint folder
-CHECKPOINT_DIR = GROUP_DATA_PATH + "/checkpoints"
-dbutils.fs.mkdirs(CHECKPOINT_DIR)
+# Join historic and real time data with respective weather info
 
 # COMMAND ----------
 
-TABLES_DIR = GROUP_DATA_PATH + "/tables"
-dbutils.fs.mkdirs(TABLES_DIR)
+bike_bronze_trial\
+    .writeStream\
+    .format("delta")\
+    .option("path", REAL_TIME_INVENTORY_INFO_DELTA_DIR)\
+    .option("checkpointLocation", REAL_TIME_INVENTORY_INFO_CHECKPOINT_DIR)\
+    .start()
 
 # COMMAND ----------
 
-TABLE_NAME = GROUP_DB_NAME + ".bikeinventoryinfo"
-
-(final_bike_historic_trial
- .write
- .format("delta")
- .mode("ignore")
- .saveAsTable(TABLE_NAME)
-)
-
-# COMMAND ----------
-
-(bike_bronze_trial.writeStream
- .format("delta")
- .trigger(once = True)
- .option("checkpointLocation", CHECKPOINT_DIR)
- .toTable(TABLE_NAME)
- .start()
- .awaitTermination()
-)
-
-# COMMAND ----------
-
-display(spark.read.format("delta").table(TABLE_NAME).sort(-col("hour_window")))
-
-# COMMAND ----------
-
-display(spark.read.format("delta").table(TABLE_NAME))
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-
+final_bike_historic_trial\
+    .writeStream\
+    .format("delta")\
+    .option("path", HISTORIC_INVENTORY_INFO_DELTA_DIR)\
+    .option("checkpointLocation", HISTORIC_INVENTORY_INFO_CHECKPOINT_DIR)\
+    .start()
 
 # COMMAND ----------
 
