@@ -1,9 +1,17 @@
 # Databricks notebook source
+# Import Statements
+
 import pandas as pd
 import requests
 import json
 import datetime
 import time
+import numpy as np
+
+from pyspark.sql.functions import *
+from pyspark.sql import Window
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
 # COMMAND ----------
 
@@ -37,6 +45,10 @@ GROUPS_STATION_ASSIGNMENT = {'G01':'W 21 St & 6 Ave',
  'G12':'11 Ave & W 41 St',
  'G13':'Lafayette St & E 8 St',
  'GXX':'Lafayette St & E 8 St'}
+
+# COMMAND ----------
+
+GROUP_STATION_ID = "b30815c0-99b6-451b-be15-902992cb8abb"
 
 # COMMAND ----------
 
@@ -76,6 +88,74 @@ GROUP_DATA_PATH = f"dbfs:/FileStore/tables/{GROUP_NAME}/"
 # Setup the hive meta store if it does not exist and select database as the focus of future sql commands in this notebook
 spark.sql(f"CREATE DATABASE IF NOT EXISTS {GROUP_DB_NAME}")
 spark.sql(f"USE {GROUP_DB_NAME}")
+
+# COMMAND ----------
+
+# Create directories
+
+# Creating Bronze/Silver/Gold Driectories
+BRONZE_DIR = GROUP_DATA_PATH + "/bronze"
+SILVER_DIR = GROUP_DATA_PATH + "/silver"
+GOLD_DIR = GROUP_DATA_PATH + "/gold"
+
+# Creating bronze storage structure
+REAL_TIME_STATION_STATUS_DELTA_DIR = BRONZE_DIR + "/real_time_station_status"
+REAL_TIME_STATION_INFO_DELTA_DIR = BRONZE_DIR + "/real_time_station_info"
+REAL_TIME_WEATHER_DELTA_DIR = BRONZE_DIR + "/real_time_weather"
+HISTORIC_STATION_INFO_DELTA_DIR = BRONZE_DIR + "/historic_station_info"
+HISTORIC_WEATHER_DELTA_DIR = BRONZE_DIR + "/historic_weather"
+
+# Creating checkpoints for bronze data
+REAL_TIME_STATION_STATUS_CHECKPOINT_DIR = REAL_TIME_STATION_STATUS_DELTA_DIR + "/checkpoints"
+REAL_TIME_STATION_INFO_CHECKPOINT_DIR = REAL_TIME_STATION_INFO_DELTA_DIR + "/checkpoints"
+REAL_TIME_WEATHER_CHECKPOINT_DIR = REAL_TIME_WEATHER_DELTA_DIR + "/checkpoints"
+HISTORIC_STATION_INFO_CHECKPOINT_DIR = HISTORIC_STATION_INFO_DELTA_DIR + "/checkpoints"
+HISTORIC_WEATHER_CHECKPOINT_DIR = HISTORIC_WEATHER_DELTA_DIR + "/checkpoints"
+
+# Creating Silver storage structure
+REAL_TIME_INVENTORY_INFO_DELTA_DIR = SILVER_DIR + "/real_time_inventory_info"
+HISTORIC_INVENTORY_INFO_DELTA_DIR = SILVER_DIR + "/historic_inventory_info"
+
+# Creating checkpoints for silver data
+REAL_TIME_INVENTORY_INFO_CHECKPOINT_DIR = REAL_TIME_INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+HISTORIC_INVENTORY_INFO_CHECKPOINT_DIR = HISTORIC_INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+
+# Creating Gold storage structure
+INVENTORY_INFO_DELTA_DIR = GOLD_DIR + "/inventory_info"
+
+# Creating checkpoints for gold data
+INVENTORY_INFO_CHECKPOINT_DIR = INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+
+# Running mkdir for all above directories
+dbutils.fs.mkdirs(BRONZE_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_STATUS_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_WEATHER_DELTA_DIR)
+dbutils.fs.mkdirs(HISTORIC_STATION_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(HISTORIC_WEATHER_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_STATUS_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_INFO_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(REAL_TIME_WEATHER_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(HISTORIC_STATION_INFO_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(HISTORIC_WEATHER_CHECKPOINT_DIR)
+
+dbutils.fs.mkdirs(SILVER_DIR)
+dbutils.fs.mkdirs(REAL_TIME_INVENTORY_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(HISTORIC_INVENTORY_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_INVENTORY_INFO_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(HISTORIC_INVENTORY_INFO_CHECKPOINT_DIR)
+
+dbutils.fs.mkdirs(GOLD_DIR)
+dbutils.fs.mkdirs(INVENTORY_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(INVENTORY_INFO_CHECKPOINT_DIR)
+
+# COMMAND ----------
+
+# To enable inferring schema for historic data when reading with readStream
+spark.conf.set("spark.sql.streaming.schemaInference", True)
+
+# To disable format check while writing delta
+spark.conf.set("spark.databricks.delta.formatCheck.enabled", False)
 
 # COMMAND ----------
 
