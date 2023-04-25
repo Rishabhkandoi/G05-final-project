@@ -115,16 +115,20 @@ HISTORIC_WEATHER_CHECKPOINT_DIR = HISTORIC_WEATHER_DELTA_DIR + "/checkpoints"
 # Creating Silver storage structure
 REAL_TIME_INVENTORY_INFO_DELTA_DIR = SILVER_DIR + "/real_time_inventory_info"
 HISTORIC_INVENTORY_INFO_DELTA_DIR = SILVER_DIR + "/historic_inventory_info"
+INVENTORY_INFO_DELTA_DIR = SILVER_DIR + "/inventory_info"
+WEATHER_INFO_DELTA_DIR = SILVER_DIR + "/weather_info"
 
 # Creating checkpoints for silver data
 REAL_TIME_INVENTORY_INFO_CHECKPOINT_DIR = REAL_TIME_INVENTORY_INFO_DELTA_DIR + "/checkpoints"
 HISTORIC_INVENTORY_INFO_CHECKPOINT_DIR = HISTORIC_INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+INVENTORY_INFO_CHECKPOINT_DIR = INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+WEATHER_INFO_CHECKPOINT_DIR = WEATHER_INFO_DELTA_DIR + "/checkpoints"
 
 # Creating Gold storage structure
-INVENTORY_INFO_DELTA_DIR = GOLD_DIR + "/inventory_info"
+MODEL_INFO = GOLD_DIR + "/model_info"
 
 # Creating checkpoints for gold data
-INVENTORY_INFO_CHECKPOINT_DIR = INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+MODEL_CHECKPOINT_DIR = MODEL_INFO + "/checkpoints"
 
 # Running mkdir for all above directories
 dbutils.fs.mkdirs(BRONZE_DIR)
@@ -144,10 +148,12 @@ dbutils.fs.mkdirs(REAL_TIME_INVENTORY_INFO_DELTA_DIR)
 dbutils.fs.mkdirs(HISTORIC_INVENTORY_INFO_DELTA_DIR)
 dbutils.fs.mkdirs(REAL_TIME_INVENTORY_INFO_CHECKPOINT_DIR)
 dbutils.fs.mkdirs(HISTORIC_INVENTORY_INFO_CHECKPOINT_DIR)
-
-dbutils.fs.mkdirs(GOLD_DIR)
 dbutils.fs.mkdirs(INVENTORY_INFO_DELTA_DIR)
 dbutils.fs.mkdirs(INVENTORY_INFO_CHECKPOINT_DIR)
+
+dbutils.fs.mkdirs(GOLD_DIR)
+dbutils.fs.mkdirs(MODEL_INFO)
+dbutils.fs.mkdirs(MODEL_CHECKPOINT_DIR)
 
 # COMMAND ----------
 

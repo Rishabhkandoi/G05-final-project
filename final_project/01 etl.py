@@ -28,7 +28,7 @@ weather_df = spark\
 # Reading Historical Data
 
 weather_history = spark\
-    .readStream\
+    .read\
     .option("inferSchema", "true")\
     .option("header", "true")\
     .option("ignoreChanges", "true")\
@@ -36,7 +36,7 @@ weather_history = spark\
     .load(NYC_WEATHER_FILE_PATH)
     
 station_history = spark\
-    .readStream\
+    .read\
     .option("inferSchema", "true")\
     .option("header", "true")\
     .option("ignoreChanges", "true")\
@@ -45,96 +45,138 @@ station_history = spark\
 
 # COMMAND ----------
 
-# Storing all bronze tables along with appropriate checkpoints
+# # Storing all bronze tables along with appropriate checkpoints
 
-station_df\
-    .write\
-    .format("delta")\
-    .option("path", REAL_TIME_STATION_INFO_DELTA_DIR)\
-    .mode("overwrite")\
-    .save()
+# station_df_data\
+#     .write\
+#     .format("delta")\
+#     .option("path", REAL_TIME_STATION_INFO_DELTA_DIR)\
+#     .mode("overwrite")\
+#     .save()
 
+# station_status_df_data\
+#     .write\
+#     .format("delta")\
+#     .option("path", REAL_TIME_STATION_STATUS_DELTA_DIR)\
+#     .mode("overwrite")\
+#     .save()
 
-station_status_df\
-    .write\
-    .format("delta")\
-    .option("path", REAL_TIME_STATION_STATUS_DELTA_DIR)\
-    .mode("overwrite")\
-    .save()
-
-weather_df\
-    .write\
-    .format("delta")\
-    .option("path", REAL_TIME_WEATHER_DELTA_DIR)\
-    .mode("overwrite")\
-    .save()
+# weather_df_data\
+#     .write\
+#     .format("delta")\
+#     .option("path", REAL_TIME_WEATHER_DELTA_DIR)\
+#     .mode("overwrite")\
+#     .save()
     
-weather_history\
-    .writeStream\
-    .format("delta")\
-    .option("path", HISTORIC_WEATHER_DELTA_DIR)\
-    .option("checkpointLocation", HISTORIC_WEATHER_CHECKPOINT_DIR)\
-    .start()
+# weather_history_data\
+#     .write\
+#     .format("delta")\
+#     .option("path", HISTORIC_WEATHER_DELTA_DIR)\
+#     .mode("overwrite")\
+#     .save()
     
-station_history\
-    .writeStream\
-    .format("delta")\
-    .option("path", HISTORIC_STATION_INFO_DELTA_DIR)\
-    .option("checkpointLocation", HISTORIC_STATION_INFO_CHECKPOINT_DIR)\
-    .start()
+# station_history_data\
+#     .write\
+#     .format("delta")\
+#     .option("path", HISTORIC_STATION_INFO_DELTA_DIR)\
+#     .mode("overwrite")\
+#     .save()
 
 # COMMAND ----------
 
-# Read all bronze tables
+# # Read all bronze tables
 
-station_df = spark\
-    .read\
-    .format("delta")\
-    .option("ignoreChanges", "true")\
-    .load(REAL_TIME_STATION_INFO_DELTA_DIR)
-    
-station_status_df = spark\
-    .read\
-    .format("delta")\
-    .option("ignoreChanges", "true")\
-    .load(REAL_TIME_STATION_STATUS_DELTA_DIR)
-    
-weather_df = spark\
-    .readStream\
-    .format("delta")\
-    .option("ignoreChanges", "true")\
-    .load(REAL_TIME_WEATHER_DELTA_DIR)
-
-# weather_history = spark\
-#     .readStream\
-#     .format("delta")\
-#     .option("ignoreChanges", "true")\
-#     .load(HISTORIC_WEATHER_DELTA_DIR)
-    
-# station_history = spark\
-#     .readStream\
-#     .format("delta")\
-#     .option("ignoreChanges", "true")\
-#     .load(HISTORIC_STATION_INFO_DELTA_DIR)
-
-weather_history = spark\
-    .read\
-    .format("delta")\
-    .load(HISTORIC_WEATHER_DELTA_DIR)
-
-# station_history = spark\
+# station_df = spark\
 #     .read\
 #     .format("delta")\
-#     .load(HISTORIC_STATION_INFO_DELTA_DIR)
+#     .option("ignoreChanges", "true")\
+#     .load(REAL_TIME_STATION_INFO_DELTA_DIR)
+    
+# station_status_df = spark\
+#     .read\
+#     .format("delta")\
+#     .option("ignoreChanges", "true")\
+#     .load(REAL_TIME_STATION_STATUS_DELTA_DIR)
+    
+# weather_df = spark\
+#     .read\
+#     .format("delta")\
+#     .option("ignoreChanges", "true")\
+#     .load(REAL_TIME_WEATHER_DELTA_DIR)
+
+# # weather_history = spark\
+# #     .readStream\
+# #     .format("delta")\
+# #     .option("ignoreChanges", "true")\
+# #     .load(HISTORIC_WEATHER_DELTA_DIR)
+    
+# # station_history = spark\
+# #     .readStream\
+# #     .format("delta")\
+# #     .option("ignoreChanges", "true")\
+# #     .load(HISTORIC_STATION_INFO_DELTA_DIR)
+
+# weather_history = spark\
+#     .read\
+#     .format("delta")\
+#     .load(HISTORIC_WEATHER_DELTA_DIR)
+
+# # station_history = spark\
+# #     .read\
+# #     .format("delta")\
+# #     .load(HISTORIC_STATION_INFO_DELTA_DIR)
 
 # COMMAND ----------
+
+display(weather_stream)
+
+# COMMAND ----------
+
+# Trensorming Real Time Weather info
+
+weather_stream = weather_df.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss"))
+weather_stream = weather_stream.withColumnRenamed("rain.1h", "rain")
+weather_stream = weather_stream.select(
+    col("dt").alias("hour_window").cast("string"),
+    col("temp"),
+    col("uvi"),
+    col("visibility"),
+    col("rain")
+)
+
+# COMMAND ----------
+
+# Trensorming Historical Weather info
+
+weather_historical = weather_history.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss"))
+
+weather_historical = weather_historical.select(
+    col("dt").alias("hour_window").cast("string"),
+    col("temp"),
+    col("uvi"),
+    col("visibility"),
+    col("rain_1h").alias("rain"))
+
+# COMMAND ----------
+
+# Merging weather data
+
+latest_end_timestamp_for_weather_hist = weather_historical.select("hour_window").sort(desc("hour_window")).head(1)[0][0]
+weather_merged = weather_stream.filter(col("hour_window") > latest_end_timestamp_for_weather_hist).union(weather_historical)
+
+weather_merged\
+    .write\
+    .format("delta")\
+    .option("path", WEATHER_INFO_DELTA_DIR)\
+    .mode("overwrite")\
+    .save()
+
+# COMMAND ----------
+
+# Transorming and saving Real-time Bike Information
 
 # Join the two dataframes on the 'station_id' column
 new_df_station = station_df.join(station_status_df, 'station_id')
-
-# COMMAND ----------
-
-
 
 # Select the required columns
 new_df_station = new_df_station.select(
@@ -153,17 +195,10 @@ new_df_station = new_df_station.select(
     'last_reported'
 )
 
-
-# COMMAND ----------
-
 new_df_station_filter = new_df_station.filter((col("name") == GROUP_STATION_ASSIGNMENT))
-
-# COMMAND ----------
 
 new_df_station_filter = new_df_station_filter.withColumn("last_reported", col("last_reported").cast("long"))
 new_df_station_filter = new_df_station_filter.withColumn("last_reported", date_format(from_unixtime(col("last_reported")), "yyyy-MM-dd HH:mm:ss"))
-
-# COMMAND ----------
 
 trial = new_df_station_filter.select(
     col('last_reported').alias('hour_window'),
@@ -182,8 +217,6 @@ trial = new_df_station_filter.select(
 #trial = trial.withColumn("diff", col("in") - col("out"))
 trial = trial.withColumn("avail", col("num_ebikes_available")+col("num_bikes_available")+col("num_docks_available")+col("num_docks_disabled")+col("num_bikes_disabled"))
 
-# COMMAND ----------
-
 bike_bronze = trial.select(
     'hour_window',
     'station_name',
@@ -194,13 +227,7 @@ bike_bronze = trial.select(
     'avail'
 )
 
-# COMMAND ----------
-
 bike_bronze_sorted = bike_bronze.orderBy(col("hour_window"))
-
-# COMMAND ----------
-
-from pyspark.sql.functions import window, last, date_format
 
 df_hourly_availability = (bike_bronze_sorted
   .groupBy(window("hour_window", "1 hour", "1 hour").alias("window_end"))  
@@ -208,112 +235,19 @@ df_hourly_availability = (bike_bronze_sorted
   .select(date_format("window_end.end", "yyyy-MM-dd HH:mm:ss").alias("hour_window"), "last_availability")
   .orderBy("hour_window"))
 
-
-# COMMAND ----------
-
 final_stream_bike = df_hourly_availability.select(
     'hour_window',
     col('last_availability').alias('avail'),
 )
 
-# COMMAND ----------
+final_stream_bike = final_stream_bike.withColumn("diff", col("avail") - 61).select("hour_window", "diff")
 
-display(final_stream_bike)
-
-# COMMAND ----------
-
-#verify kar lena pls
-
-# COMMAND ----------
-
-weather_df = weather_df.withColumn("dt", col("dt").cast("long"))
-weather_df = weather_df.withColumn("dt", date_format(from_unixtime(col("dt")), "yyyy-MM-dd HH:mm:ss"))
-
-# COMMAND ----------
-
-weather_new = weather_df
-# assuming `weather_df` is your DataFrame with the `weather` column
-weather_new = weather_new.withColumn("description", col("weather").getItem(0).getField("description"))
-weather_new = weather_new.withColumn("icon", col("weather").getItem(0).getField("icon"))
-weather_new = weather_new.withColumn("id", col("weather").getItem(0).getField("id"))
-weather_new = weather_new.withColumn("main", col("weather").getItem(0).getField("main"))
-
-# drop the `weather` column since we no longer need it
-weather_new = weather_new.drop("weather")
-
-# COMMAND ----------
-
-weather_new = weather_new.withColumnRenamed("rain.1h", "rain")
-
-# COMMAND ----------
-
-weather_stream = weather_new.select(
-    col("dt").cast("string"),
-    col("temp").cast("double"),
-    col("feels_like").cast("double"),
-    col("pressure").cast("integer"),
-    col("humidity").cast("integer"),
-    col("dew_point").cast("double"),
-    col("uvi").cast("double"),
-    col("clouds").cast("integer"),
-    col("visibility").cast("integer"),
-    col("wind_speed").cast("double"),
-    col("wind_deg").cast("integer"),
-    col("pop").cast("double"),
-    col("id").cast("integer"),
-    col("main"),
-    col("description"),
-    col("icon"),
-    col("rain").cast("double")
-)
-
-# COMMAND ----------
-
-display(weather_stream)
-
-# COMMAND ----------
-
-# Read NYC_WEATHER
-nyc_weather_df = weather_history
-
-# COMMAND ----------
-
-nyc_weather_df = nyc_weather_df.withColumn("dt", col("dt").cast("long"))
-nyc_weather_df = nyc_weather_df.withColumn("dt", date_format(from_unixtime(col("dt")), "yyyy-MM-dd HH:mm:ss"))
-# display(nyc_weather_df)
-
-# COMMAND ----------
-
-weather_history = nyc_weather_df.select(
-    col("dt").alias("hour_window").cast("string"),
-    col("temp").cast("double"),
-    col("feels_like").cast("double"),
-    col("pressure").cast("integer"),
-    col("humidity").cast("integer"),
-    col("dew_point").cast("double"),
-    col("uvi").cast("double"),
-    col("clouds").cast("integer"),
-    col("visibility").cast("integer"),
-    col("wind_speed").cast("double"),
-    col("wind_deg").cast("integer"),
-    col("pop").cast("double"),
-    col("id").cast("integer"),
-    col("main"),
-    col("description"),
-    col("icon"),
-    col("rain_1h").alias("rain").cast("double")
-)
-
-# display(weather_history)
-
-# COMMAND ----------
-
-# bike_bronze\
-#     .writeStream\
-#     .format("delta")\
-#     .option("path", REAL_TIME_INVENTORY_INFO_DELTA_DIR)\
-#     .option("checkpointLocation", REAL_TIME_INVENTORY_INFO_CHECKPOINT_DIR)\
-#     .start()
+final_stream_bike\
+    .write\
+    .format("delta")\
+    .option("path", REAL_TIME_INVENTORY_INFO_DELTA_DIR)\
+    .mode("overwrite")\
+    .save()
 
 # COMMAND ----------
 
@@ -410,13 +344,11 @@ def apply_transformations(weather_history):
     initial_bike = 61
     final_bike_historic = cumu_sum_diff.withColumn("avail", cumu_sum_diff["avail"] + lit(initial_bike))
 
-    final_bike_historic_weather_merged = final_bike_historic.join(weather_history, on="hour_window", how="left")
+    # final_bike_historic_weather_merged = final_bike_historic.join(weather_history, on="hour_window", how="left")
 
-    return final_bike_historic_weather_merged
+    final_bike_historic = final_bike_historic.select("hour_window", "diff")
 
-# COMMAND ----------
-
-# dbutils.fs.rm(HISTORIC_INVENTORY_INFO_DELTA_DIR, True)
+    return final_bike_historic
 
 # COMMAND ----------
 
@@ -426,9 +358,10 @@ try:
     latest_end_timestamp_in_silver_storage = spark.read.format("delta").load(HISTORIC_INVENTORY_INFO_DELTA_DIR).select("hour_window").sort(desc("hour_window")).head(1)[0][0]
 except:
     latest_end_timestamp_in_silver_storage = '2003-02-28 13:33:07'
-latest_start_timestamp_in_bronze = spark.read.format("delta").load(HISTORIC_STATION_INFO_DELTA_DIR).select("started_at").filter((col("start_station_name") == GROUP_STATION_ASSIGNMENT) | (col("end_station_name") == GROUP_STATION_ASSIGNMENT)).sort(desc("ended_at")).head(1)[0][0]
+latest_start_timestamp_in_bronze = station_history.select("started_at").filter(col("start_station_name") == GROUP_STATION_ASSIGNMENT).sort(desc("started_at")).head(1)[0][0]
+latest_end_timestamp_in_bronze = station_history.select("ended_at").filter(col("end_station_name") == GROUP_STATION_ASSIGNMENT).sort(desc("ended_at")).head(1)[0][0]
 
-if latest_start_timestamp_in_bronze >= latest_end_timestamp_in_silver_storage:
+if latest_start_timestamp_in_bronze >= latest_end_timestamp_in_silver_storage or latest_end_timestamp_in_bronze >= latest_end_timestamp_in_silver_storage:
     print("Overwriting historic data in Silver Storage")
     final_bike_historic_trial = apply_transformations(weather_history)
     final_bike_historic_trial\
@@ -440,68 +373,23 @@ if latest_start_timestamp_in_bronze >= latest_end_timestamp_in_silver_storage:
 
 # COMMAND ----------
 
-display(spark.read.format("delta").load(HISTORIC_INVENTORY_INFO_DELTA_DIR))
+# Merge Historic and Real Time Bike Inventory Info
 
-# COMMAND ----------
+historic_inventory_data = spark.read.format("delta").load(HISTORIC_INVENTORY_INFO_DELTA_DIR)
+real_time_inventory_data = spark.read.format("delta").load(REAL_TIME_INVENTORY_INFO_DELTA_DIR)
 
-relevant_bike_df = spark.read.format("delta").load(HISTORIC_INVENTORY_INFO_DELTA_DIR)
+latest_end_timestamp_in_silver_storage = historic_inventory_data.select("hour_window").sort(desc("hour_window")).head(1)[0][0]
+real_time_inventory_data = real_time_inventory_data.filter(col("hour_window") > latest_end_timestamp_in_silver_storage)
 
-# COMMAND ----------
+merged_inventory_data = historic_inventory_data.union(real_time_inventory_data)
 
-relevant_bike_df = relevant_bike_df.withColumn('year',year(relevant_bike_df["hour_window"])).withColumn('month',month(relevant_bike_df["hour_window"])).withColumn('dom',dayofmonth(relevant_bike_df["hour_window"]))
-relevant_bike_df = relevant_bike_df.withColumn("year_month",concat_ws("-",relevant_bike_df.year,relevant_bike_df.month))
-relevant_bike_df = relevant_bike_df.withColumn("simple_dt",concat_ws("-",relevant_bike_df.year_month,relevant_bike_df.dom))
-display(relevant_bike_df)
+merged_inventory_data\
+    .write\
+    .format("delta")\
+    .option("path", INVENTORY_INFO_DELTA_DIR)\
+    .mode("overwrite")\
+    .save()
 
-# COMMAND ----------
-
-import numpy as np
-
-relevant_bike_df_pd = relevant_bike_df.toPandas()
-relevant_bike_df_pd_agg = relevant_bike_df_pd.groupby('simple_dt').agg(avg_temp=('feels_like', np.mean),
-                                                     avg_uvi=('uvi', np.mean),
-                                                     avg_ws=('wind_speed', np.mean),
-                                                     avg_humidity=('humidity', np.mean),
-                                                     avg_pressure=('pressure', np.mean),
-                                                     avg_clouds=('clouds', np.mean),
-                                                     avg_visibility=('visibility', np.mean),
-                                                     avg_rain_1h=('rain', np.mean),
-                                                    #  avg_snow_1h=('snow_1h', np.mean),
-                                                     avg_wind_deg=('wind_deg', np.mean),
-                                                     avg_dew_point=('dew_point', np.mean))
-
-
-# COMMAND ----------
-
-relevant_bike_df_pd_agg = relevant_bike_df_pd_agg.reset_index()
-
-# COMMAND ----------
-
-final_df = relevant_bike_df_pd.merge(relevant_bike_df_pd_agg,on="simple_dt",how="left")
-
-# COMMAND ----------
-
-final_df['temp'].isna().replace(final_df.avg_temp,inplace=True)
-
-# COMMAND ----------
-
-pd.plot(final_df.temp)
-
-# COMMAND ----------
-
-display(spark.read.format("delta").load(HISTORIC_INVENTORY_INFO_DELTA_DIR).filter((col("hour_window") > "2022-07-04 01:00:00")))
-
-# COMMAND ----------
-
-display(spark.read.format("delta").load(HISTORIC_STATION_INFO_DELTA_DIR).filter(((col("started_at") > "2022-07-04 01:00:00") & (col("start_station_name") == GROUP_STATION_ASSIGNMENT) & (col("started_at") < "2022-07-04 02:00:00")) | ((col("ended_at") > "2022-07-04 01:00:00") & (col("end_station_name") == GROUP_STATION_ASSIGNMENT) & (col("ended_at") < "2022-07-04 02:00:00"))))
-
-
-# COMMAND ----------
-
-display(spark.read.format("delta").load(REAL_TIME_STATION_STATUS_DELTA_DIR)\
-    .withColumn("last_reported", date_format(from_unixtime(col("last_reported").cast("long")), "yyyy-MM-dd HH:mm:ss"))\
-    .filter(col("station_id") == GROUP_STATION_ID)\
-        .select("num_bikes_available", "num_ebikes_available", "num_docks_available", "num_scooters_available", "last_reported").sort(asc("last_reported")))
 
 # COMMAND ----------
 
