@@ -3,23 +3,177 @@
 
 # COMMAND ----------
 
-station_df = spark.readStream.format("delta").option("ignoreChanges", "true").load(BRONZE_STATION_INFO_PATH)
-station_status_df = spark.readStream.format("delta").option("ignoreChanges", "true").load(BRONZE_STATION_STATUS_PATH)
-weather_df = spark.readStream.format("delta").option("ignoreChanges", "true").load(BRONZE_NYC_WEATHER_PATH)
+# Reading Live Data
+
+station_df = spark\
+    .read\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(BRONZE_STATION_INFO_PATH)
+    
+station_status_df = spark\
+    .read\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(BRONZE_STATION_STATUS_PATH)
+    
+weather_df = spark\
+    .read\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(BRONZE_NYC_WEATHER_PATH)
 
 # COMMAND ----------
 
-station_df.printSchema()
-display(station_df)
+# Reading Historical Data
+
+weather_history = spark\
+    .read\
+    .option("inferSchema", "true")\
+    .option("header", "true")\
+    .option("ignoreChanges", "true")\
+    .format("csv")\
+    .load(NYC_WEATHER_FILE_PATH)
+    
+station_history = spark\
+    .read\
+    .option("inferSchema", "true")\
+    .option("header", "true")\
+    .option("ignoreChanges", "true")\
+    .format("csv")\
+    .load(BIKE_TRIP_DATA_PATH)
 
 # COMMAND ----------
 
-station_status_df.printSchema()
-display(station_status_df)
+# # Storing all bronze tables along with appropriate checkpoints
+
+# station_df_data\
+#     .write\
+#     .format("delta")\
+#     .option("path", REAL_TIME_STATION_INFO_DELTA_DIR)\
+#     .mode("overwrite")\
+#     .save()
+
+# station_status_df_data\
+#     .write\
+#     .format("delta")\
+#     .option("path", REAL_TIME_STATION_STATUS_DELTA_DIR)\
+#     .mode("overwrite")\
+#     .save()
+
+# weather_df_data\
+#     .write\
+#     .format("delta")\
+#     .option("path", REAL_TIME_WEATHER_DELTA_DIR)\
+#     .mode("overwrite")\
+#     .save()
+    
+# weather_history_data\
+#     .write\
+#     .format("delta")\
+#     .option("path", HISTORIC_WEATHER_DELTA_DIR)\
+#     .mode("overwrite")\
+#     .save()
+    
+# station_history_data\
+#     .write\
+#     .format("delta")\
+#     .option("path", HISTORIC_STATION_INFO_DELTA_DIR)\
+#     .mode("overwrite")\
+#     .save()
 
 # COMMAND ----------
 
-from pyspark.sql.functions import col
+# # Read all bronze tables
+
+# station_df = spark\
+#     .read\
+#     .format("delta")\
+#     .option("ignoreChanges", "true")\
+#     .load(REAL_TIME_STATION_INFO_DELTA_DIR)
+    
+# station_status_df = spark\
+#     .read\
+#     .format("delta")\
+#     .option("ignoreChanges", "true")\
+#     .load(REAL_TIME_STATION_STATUS_DELTA_DIR)
+    
+# weather_df = spark\
+#     .read\
+#     .format("delta")\
+#     .option("ignoreChanges", "true")\
+#     .load(REAL_TIME_WEATHER_DELTA_DIR)
+
+# # weather_history = spark\
+# #     .readStream\
+# #     .format("delta")\
+# #     .option("ignoreChanges", "true")\
+# #     .load(HISTORIC_WEATHER_DELTA_DIR)
+    
+# # station_history = spark\
+# #     .readStream\
+# #     .format("delta")\
+# #     .option("ignoreChanges", "true")\
+# #     .load(HISTORIC_STATION_INFO_DELTA_DIR)
+
+# weather_history = spark\
+#     .read\
+#     .format("delta")\
+#     .load(HISTORIC_WEATHER_DELTA_DIR)
+
+# # station_history = spark\
+# #     .read\
+# #     .format("delta")\
+# #     .load(HISTORIC_STATION_INFO_DELTA_DIR)
+
+# COMMAND ----------
+
+display(weather_stream)
+
+# COMMAND ----------
+
+# Trensorming Real Time Weather info
+
+weather_stream = weather_df.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss"))
+weather_stream = weather_stream.withColumnRenamed("rain.1h", "rain")
+weather_stream = weather_stream.select(
+    col("dt").alias("hour_window").cast("string"),
+    col("temp"),
+    col("uvi"),
+    col("visibility"),
+    col("rain")
+)
+
+# COMMAND ----------
+
+# Trensorming Historical Weather info
+
+weather_historical = weather_history.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss"))
+
+weather_historical = weather_historical.select(
+    col("dt").alias("hour_window").cast("string"),
+    col("temp"),
+    col("uvi"),
+    col("visibility"),
+    col("rain_1h").alias("rain"))
+
+# COMMAND ----------
+
+# Merging weather data
+
+latest_end_timestamp_for_weather_hist = weather_historical.select("hour_window").sort(desc("hour_window")).head(1)[0][0]
+weather_merged = weather_stream.filter(col("hour_window") > latest_end_timestamp_for_weather_hist).union(weather_historical)
+
+weather_merged\
+    .write\
+    .format("delta")\
+    .option("path", WEATHER_INFO_DELTA_DIR)\
+    .mode("overwrite")\
+    .save()
+
+# COMMAND ----------
+
+# Transorming and saving Real-time Bike Information
 
 # Join the two dataframes on the 'station_id' column
 new_df_station = station_df.join(station_status_df, 'station_id')
@@ -34,452 +188,208 @@ new_df_station = new_df_station.select(
     'lon', 
     'capacity',
     'num_ebikes_available',
-    col('num_bikes_available').alias('bikes_available'), 
-    col('num_docks_available').alias('docks_available'),
-    'is_renting', 
-    'is_returning',
+    'num_bikes_available',
+    'num_docks_available',
+    'num_docks_disabled',
+    'num_bikes_disabled',
     'last_reported'
 )
-new_df_station.printSchema()
-
-# COMMAND ----------
 
 new_df_station_filter = new_df_station.filter((col("name") == GROUP_STATION_ASSIGNMENT))
-display(new_df_station_filter)
-
-# COMMAND ----------
-
-from pyspark.sql.functions import col, from_unixtime, date_format
 
 new_df_station_filter = new_df_station_filter.withColumn("last_reported", col("last_reported").cast("long"))
 new_df_station_filter = new_df_station_filter.withColumn("last_reported", date_format(from_unixtime(col("last_reported")), "yyyy-MM-dd HH:mm:ss"))
-display(new_df_station_filter)
-
-# COMMAND ----------
 
 trial = new_df_station_filter.select(
     col('last_reported').alias('hour_window'),
-    col('is_renting').alias('out'), 
-    col('is_returning').alias('in'),
     col('name').alias('station_name'),
     col('short_name').alias('station_id'),
     'lat', 
     col('lon').alias('lng'), 
-    col('bikes_available').alias('avail')
+    'num_ebikes_available',
+    'num_bikes_available',
+    'num_docks_available',
+    'num_docks_disabled',
+    'num_bikes_disabled',
+    'capacity'
+    
 )
-trial = trial.withColumn("diff", col("in") - col("out"))
-
-# COMMAND ----------
+#trial = trial.withColumn("diff", col("in") - col("out"))
+trial = trial.withColumn("avail", col("num_ebikes_available")+col("num_bikes_available")+col("num_docks_available")+col("num_docks_disabled")+col("num_bikes_disabled"))
 
 bike_bronze = trial.select(
     'hour_window',
-    'out', 
-    'in',
     'station_name',
     'station_id',
     'lat', 
     'lng', 
-    'diff',
+    'capacity',
     'avail'
 )
 
-display(bike_bronze)
+bike_bronze_sorted = bike_bronze.orderBy(col("hour_window"))
 
-# COMMAND ----------
+df_hourly_availability = (bike_bronze_sorted
+  .groupBy(window("hour_window", "1 hour", "1 hour").alias("window_end"))  
+  .agg(last("avail").alias("last_availability"))
+  .select(date_format("window_end.end", "yyyy-MM-dd HH:mm:ss").alias("hour_window"), "last_availability")
+  .orderBy("hour_window"))
 
-#from pyspark.sql.functions import window, col, count
-
-#window_size = "1 hour"
-#window_col = window(col("last_reported"), window_size, window_size)
-#grouped_df = new_df_station_filter.groupBy(window_col).agg(count("*"))
-
-# COMMAND ----------
-
-#grouped_df.printSchema()
-
-# COMMAND ----------
-
-from pyspark.sql.functions import col, from_unixtime, date_format
-
-weather_df = weather_df.withColumn("dt", col("dt").cast("long"))
-weather_df = weather_df.withColumn("dt", date_format(from_unixtime(col("dt")), "yyyy-MM-dd HH:mm:ss"))
-
-# COMMAND ----------
-
-from pyspark.sql.functions import col
-weather_new = weather_df
-# assuming `weather_df` is your DataFrame with the `weather` column
-weather_new = weather_new.withColumn("description", col("weather").getItem(0).getField("description"))
-weather_new = weather_new.withColumn("icon", col("weather").getItem(0).getField("icon"))
-weather_new = weather_new.withColumn("id", col("weather").getItem(0).getField("id"))
-weather_new = weather_new.withColumn("main", col("weather").getItem(0).getField("main"))
-
-# drop the `weather` column since we no longer need it
-weather_new = weather_new.drop("weather")
-display(weather_new)
-
-# COMMAND ----------
-
-weather_new = weather_new.withColumnRenamed("rain.1h", "rain")
-
-# COMMAND ----------
-
-from pyspark.sql.functions import col
-
-weather_stream = weather_new.select(
-    col("dt").cast("string"),
-    col("temp").cast("double"),
-    col("feels_like").cast("double"),
-    col("pressure").cast("integer"),
-    col("humidity").cast("integer"),
-    col("dew_point").cast("double"),
-    col("uvi").cast("double"),
-    col("clouds").cast("integer"),
-    col("visibility").cast("integer"),
-    col("wind_speed").cast("double"),
-    col("wind_deg").cast("integer"),
-    col("pop").cast("double"),
-    col("id").cast("integer"),
-    col("main"),
-    col("description"),
-    col("icon"),
-    col("rain").cast("double")
+final_stream_bike = df_hourly_availability.select(
+    'hour_window',
+    col('last_availability').alias('avail'),
 )
 
-display(weather_stream)
+final_stream_bike = final_stream_bike.withColumn("diff", col("avail") - 61).select("hour_window", "diff")
+
+final_stream_bike\
+    .write\
+    .format("delta")\
+    .option("path", REAL_TIME_INVENTORY_INFO_DELTA_DIR)\
+    .mode("overwrite")\
+    .save()
 
 # COMMAND ----------
 
-"""dt:string
-temp:double
-feels_like:double
-pressure:integer
-humidity:integer
-dew_point:double
-uvi:double
-clouds:integer
-visibility:integer
-wind_speed:double
-wind_deg:integer
-pop:double
-id:integer
-main:string
-description:string
-icon:string
-rain_1h:double
+# Code to apply transformations in historic data
 
-dt: string, 
-temp: double, 
-feels_like: double, 
-pressure: bigint, 
-humidity: bigint, 
-dew_point: double, 
-uvi: double, 
-clouds: bigint, 
-visibility: bigint, 
-wind_speed: double, 
-wind_deg: bigint, 
-pop: double, 
-id: bigint,
-main: string
-description: string,
-icon: string,
-rain.1h: double """
+def apply_transformations(weather_history):
+    
+    # Read Historic data from bronze storage
+    station_history = spark\
+        .read\
+        .format("delta")\
+        .load(HISTORIC_STATION_INFO_DELTA_DIR)
 
-# COMMAND ----------
+    bike_trip_df = station_history.sort(desc("started_at"))
 
-weather_new
+    # First subset for our start_station
+    bike_start = bike_trip_df.filter((col("start_station_name") == GROUP_STATION_ASSIGNMENT)).select(
+        "ride_id", "rideable_type", "started_at", "start_station_name", "start_station_id", "start_lat", "start_lng","member_casual")
 
-# COMMAND ----------
+    # creating window for every hour from the start date and time
+    hourly_counts_start = bike_start \
+        .groupBy(window(col("started_at"), "1 hour").alias("hour_window")) \
+        .agg(count("ride_id").alias("ride_count").alias("out")) \
+        .orderBy("hour_window")
 
-#Historic Bike Trip Data for Model Building (Stream this data source)
+    hourly_counts_start = hourly_counts_start.withColumn("hour_window", col("hour_window.end"))
 
-# COMMAND ----------
+    # Second subset for our end_station
+    bike_end = bike_trip_df.filter((col("end_station_name") == GROUP_STATION_ASSIGNMENT)).select(
+        "ride_id", "rideable_type", "ended_at", "end_station_name", "end_station_id", "end_lat", "end_lng","member_casual")
 
-bike_trip_df = spark.read.option("inferSchema", "true").option("header", "true").format("csv").load(BIKE_TRIP_DATA_PATH)
+    # creating window for every hour from the end date and time
 
-# COMMAND ----------
+    hourly_counts_end = bike_end \
+        .groupBy(window(col("ended_at"), "1 hour").alias("hour_window")) \
+        .agg(count("ride_id").alias("ride_count").alias("in")) \
+        .orderBy("hour_window")
 
-from pyspark.sql.functions import col, desc
-bike_trip_df = bike_trip_df.orderBy(col("started_at").desc())
-display(bike_trip_df)
+    hourly_counts_end = hourly_counts_end.withColumn("hour_window", col("hour_window.end"))
 
-# COMMAND ----------
+    # creating dummy table for every hour and imputing 0 for in and out values 
+    # Define start and end dates
+    start_date = pd.to_datetime(bike_start.select("started_at").sort(asc("started_at")).head(1)[0][0]).round("H")
+    end_date = pd.to_datetime(bike_end.select("ended_at").sort(desc("ended_at")).head(1)[0][0]).round("H")
 
-# Dividing bike_data into two parts , one where start = University and other where end = University
-# If it starts at Uni, it means bikes are going out, therefore out count
-# If ends at Uni, it means bikes are coming in, therefore in count
+    # Create a Spark DataFrame with hourly date range and in/out columns initialized to 0
+    dummy = spark.range(0, (pd.to_datetime(end_date) - pd.to_datetime(start_date)).total_seconds() // 3600 + 1, step=1)\
+        .withColumn("date", lit(pd.to_datetime(start_date)))\
+        .withColumn("in", lit(0))\
+        .withColumn("out", lit(0))
 
-# COMMAND ----------
+    # Add 1 hour to each row
+    dummy = dummy.rdd.map(lambda x: (x[0], x[1] + pd.Timedelta(hours=x[0]), x[2], x[3])).toDF(['index', 'date', 'in', 'out'])
 
-# First subset for start_station = University
-bike_start = bike_trip_df.filter((col("start_station_name") == GROUP_STATION_ASSIGNMENT)).select(
-    "ride_id", "rideable_type", "started_at", "start_station_name", "start_station_id", "start_lat", "start_lng","member_casual")
+    #out_dummy table
+    out_dummy = dummy.select('date', 'out')
+    # rename the 'date' column in out_dummy to 'hour_window' to match the schema of hourly_counts_starts
+    out_dummy = out_dummy.withColumnRenamed('date', 'hour_window')
 
-sorted_bike_start = bike_start.orderBy(col("started_at").desc())
+    # left-anti join to fill 0 where no bikes went out for a given hour time frame
+    missing_rows_start = out_dummy.join(hourly_counts_start, on='hour_window', how='left_anti')
+    hourly_counts_start = hourly_counts_start.union(missing_rows_start.select(hourly_counts_start.columns))
 
-display(sorted_bike_start)
+    #re name for in_dummy 
+    in_dummy = dummy.select('date','in')
+    in_dummy = in_dummy.withColumnRenamed('date', 'hour_window')
 
-# COMMAND ----------
+    #similarly left-anti join
+    missing_rows = in_dummy.join(hourly_counts_end, on='hour_window', how='left_anti')
+    hourly_counts_end = hourly_counts_end.union(missing_rows.select(hourly_counts_end.columns))
 
-# creating window for every hour from the start date and time
-from pyspark.sql.functions import window, count
+    #merging both the tables
+    merged_table = hourly_counts_start.join(hourly_counts_end, on='hour_window', how='inner')
+    final_bike_trip = merged_table.orderBy(col("hour_window"))
 
-hourly_counts_start = bike_start \
-    .groupBy(window(col("started_at"), "1 hour").alias("hour_window")) \
-    .agg(count("ride_id").alias("ride_count").alias("out")) \
-    .orderBy("hour_window")
+    # filling in values for each row
+    final_bike_trip = final_bike_trip.withColumn("station_name", lit(GROUP_STATION_ASSIGNMENT)) \
+                                    .withColumn("station_id", lit("5905.14")) \
+                                    .withColumn("lat", lit("40.734814").cast("double")) \
+                                    .withColumn("lng", lit("-73.992085").cast("double"))
+                                 
+    # converting to yyyy-MM-dd HH:mm:ss format
+    final_bike_trip= final_bike_trip.withColumn("hour_window", date_format("hour_window", "yyyy-MM-dd HH:mm:ss"))
 
-hourly_counts_start = hourly_counts_start.withColumn("hour_window", col("hour_window.end"))
-display(hourly_counts_start)
+    df_bike= final_bike_trip
+    df_bike = df_bike.withColumn("diff", col("in") - col("out"))
 
-# COMMAND ----------
+    # cum sum - diff column
+    window_val = (Window.partitionBy('station_name').orderBy('hour_window')
+                .rangeBetween(Window.unboundedPreceding, 0))
+    cumu_sum_diff = df_bike.withColumn('avail', F.sum('diff').over(window_val))
 
-# Second subset for end_station = University
-bike_end = bike_trip_df.filter((col("end_station_name") == GROUP_STATION_ASSIGNMENT)).select(
-    "ride_id", "rideable_type", "ended_at", "end_station_name", "end_station_id", "end_lat", "end_lng","member_casual")
+    #setting initial_bikes 
+    initial_bike = 61
+    final_bike_historic = cumu_sum_diff.withColumn("avail", cumu_sum_diff["avail"] + lit(initial_bike))
 
-sorted_bike_end = bike_end.orderBy(col("ended_at"))
-display(sorted_bike_end)
+    # final_bike_historic_weather_merged = final_bike_historic.join(weather_history, on="hour_window", how="left")
 
-# COMMAND ----------
+    final_bike_historic = final_bike_historic.select("hour_window", "diff")
 
-# creating window for every hour from the end date and time
-
-hourly_counts_end = bike_end \
-    .groupBy(window(col("ended_at"), "1 hour").alias("hour_window")) \
-    .agg(count("ride_id").alias("ride_count").alias("in")) \
-    .orderBy("hour_window")
-
-
-hourly_counts_end = hourly_counts_end.withColumn("hour_window", col("hour_window.end"))
-
-display(hourly_counts_end)
+    return final_bike_historic
 
 # COMMAND ----------
 
-# creating dummy table for every hour and imputing 0 for in and out values 
-from pyspark.sql.functions import lit
-import pandas as pd
-# Define start and end dates
-start_date = '2021-11-01 01:00:00'
-end_date = '2023-03-01 00:00:00'
+# Overwrite the historic transformed data in silver storage if there is any new data according to the timestamp
 
-# Create a Spark DataFrame with hourly date range and in/out columns initialized to 0
-dummy = spark.range(0, (pd.to_datetime(end_date) - pd.to_datetime(start_date)).total_seconds() // 3600 + 1, step=1)\
-    .withColumn("date", lit(pd.to_datetime(start_date)))\
-    .withColumn("in", lit(0))\
-    .withColumn("out", lit(0))
+try:
+    latest_end_timestamp_in_silver_storage = spark.read.format("delta").load(HISTORIC_INVENTORY_INFO_DELTA_DIR).select("hour_window").sort(desc("hour_window")).head(1)[0][0]
+except:
+    latest_end_timestamp_in_silver_storage = '2003-02-28 13:33:07'
+latest_start_timestamp_in_bronze = station_history.select("started_at").filter(col("start_station_name") == GROUP_STATION_ASSIGNMENT).sort(desc("started_at")).head(1)[0][0]
+latest_end_timestamp_in_bronze = station_history.select("ended_at").filter(col("end_station_name") == GROUP_STATION_ASSIGNMENT).sort(desc("ended_at")).head(1)[0][0]
 
-# Add 1 hour to each row
-dummy = dummy.rdd.map(lambda x: (x[0], x[1] + pd.Timedelta(hours=x[0]), x[2], x[3])).toDF(['index', 'date', 'in', 'out'])
-
-# Show the resulting DataFrame
-display(dummy)
-
-# COMMAND ----------
-
-#out_dummy table
-out_dummy = dummy.select('date', 'out')
-# rename the 'date' column in out_dummy to 'hour_window' to match the schema of hourly_counts_starts
-out_dummy = out_dummy.withColumnRenamed('date', 'hour_window')
-display(out_dummy)
+if latest_start_timestamp_in_bronze >= latest_end_timestamp_in_silver_storage or latest_end_timestamp_in_bronze >= latest_end_timestamp_in_silver_storage:
+    print("Overwriting historic data in Silver Storage")
+    final_bike_historic_trial = apply_transformations(weather_history)
+    final_bike_historic_trial\
+        .write\
+        .mode("overwrite")\
+        .format("delta")\
+        .option("path", HISTORIC_INVENTORY_INFO_DELTA_DIR)\
+        .save()
 
 # COMMAND ----------
 
-# left-anti join to fill 0 where no bikes went out for a given hour time frame
-from pyspark.sql.functions import col
-missing_rows_start = out_dummy.join(hourly_counts_start, on='hour_window', how='left_anti')
-hourly_counts_start = hourly_counts_start.union(missing_rows_start.select(hourly_counts_start.columns))
-display(hourly_counts_start)
+# Merge Historic and Real Time Bike Inventory Info
 
-# COMMAND ----------
+historic_inventory_data = spark.read.format("delta").load(HISTORIC_INVENTORY_INFO_DELTA_DIR)
+real_time_inventory_data = spark.read.format("delta").load(REAL_TIME_INVENTORY_INFO_DELTA_DIR)
 
-#re name for in_dummy 
-in_dummy = dummy.select('date','in')
-in_dummy = in_dummy.withColumnRenamed('date', 'hour_window')
-display(in_dummy)
+latest_end_timestamp_in_silver_storage = historic_inventory_data.select("hour_window").sort(desc("hour_window")).head(1)[0][0]
+real_time_inventory_data = real_time_inventory_data.filter(col("hour_window") > latest_end_timestamp_in_silver_storage)
 
-# COMMAND ----------
+merged_inventory_data = historic_inventory_data.union(real_time_inventory_data)
 
-#similarly left-anti join
-from pyspark.sql.functions import col
-missing_rows = in_dummy.join(hourly_counts_end, on='hour_window', how='left_anti')
-hourly_counts_end = hourly_counts_end.union(missing_rows.select(hourly_counts_end.columns))
-display(hourly_counts_end)
+merged_inventory_data\
+    .write\
+    .format("delta")\
+    .option("path", INVENTORY_INFO_DELTA_DIR)\
+    .mode("overwrite")\
+    .save()
 
-# COMMAND ----------
-
-#merging both the tables
-merged_table = hourly_counts_start.join(hourly_counts_end, on='hour_window', how='inner')
-final_bike_trip = merged_table.orderBy(col("hour_window"))
-display(final_bike_trip)
-
-# COMMAND ----------
-
-# filling in values for each row
-final_bike_trip = final_bike_trip.withColumn("station_name", lit(GROUP_STATION_ASSIGNMENT)) \
-                                 .withColumn("station_id", lit("5905.14")) \
-                                 .withColumn("lat", lit("40.734814").cast("double")) \
-                                 .withColumn("lng", lit("-73.992085").cast("double"))
-
-display(final_bike_trip)
-
-# COMMAND ----------
-
-from pyspark.sql.functions import date_format
-# converting to yyyy-MM-dd HH:mm:ss format
-final_bike_trip= final_bike_trip.withColumn("hour_window", date_format("hour_window", "yyyy-MM-dd HH:mm:ss"))
-display(final_bike_trip)
-
-# COMMAND ----------
-
-from pyspark.sql.functions import row_number, when
-from pyspark.sql.window import Window
-df_bike= final_bike_trip
-
-# COMMAND ----------
-
-from pyspark.sql.functions import col, lag, coalesce
-# add a column with the difference between in and out
-df_bike = df_bike.withColumn("diff", col("in") - col("out"))
-display(df_bike)
-
-# COMMAND ----------
-
-from pyspark.sql import Window
-from pyspark.sql import functions as F
-# cum sum - diff column
-window_val = (Window.partitionBy('station_name').orderBy('hour_window')
-             .rangeBetween(Window.unboundedPreceding, 0))
-cumu_sum_diff = df_bike.withColumn('avail', F.sum('diff').over(window_val))
-display(cumu_sum_diff)
-
-# COMMAND ----------
-
-#setting initial_bikes 
-from pyspark.sql.functions import lit
-initial_bike = 30
-final_bike_historic = cumu_sum_diff.withColumn("avail", cumu_sum_diff["avail"] + lit(initial_bike))
-display(final_bike_historic)
-
-# COMMAND ----------
-
-#Historic NYC Weather for Model Building
-
-# COMMAND ----------
-
-# Read NYC_WEATHER
-nyc_weather_df = spark.read.option("inferSchema", "true").option("header", "true").format("csv").load(NYC_WEATHER_FILE_PATH)
-
-# COMMAND ----------
-
-from pyspark.sql.functions import col, from_unixtime, date_format
-
-nyc_weather_df = nyc_weather_df.withColumn("dt", col("dt").cast("long"))
-nyc_weather_df = nyc_weather_df.withColumn("dt", date_format(from_unixtime(col("dt")), "yyyy-MM-dd HH:mm:ss"))
-display(nyc_weather_df)
-
-# COMMAND ----------
-
-from pyspark.sql.functions import col
-
-weather_history = nyc_weather_df.select(
-    col("dt").cast("string"),
-    col("temp").cast("double"),
-    col("feels_like").cast("double"),
-    col("pressure").cast("integer"),
-    col("humidity").cast("integer"),
-    col("dew_point").cast("double"),
-    col("uvi").cast("double"),
-    col("clouds").cast("integer"),
-    col("visibility").cast("integer"),
-    col("wind_speed").cast("double"),
-    col("wind_deg").cast("integer"),
-    col("pop").cast("double"),
-    col("id").cast("integer"),
-    col("main"),
-    col("description"),
-    col("icon"),
-    col("rain_1h").alias("rain").cast("double")
-)
-
-display(weather_history)
-
-# COMMAND ----------
-
-bike_bronze_trial = bike_bronze
-final_bike_historic_trial = final_bike_historic
-
-# COMMAND ----------
-
-# Create a checkpoint folder
-CHECKPOINT_DIR = GROUP_DATA_PATH + "/checkpoints"
-dbutils.fs.mkdirs(CHECKPOINT_DIR)
-
-# COMMAND ----------
-
-TABLES_DIR = GROUP_DATA_PATH + "/tables"
-dbutils.fs.mkdirs(TABLES_DIR)
-
-# COMMAND ----------
-
-TABLE_NAME = GROUP_DB_NAME + ".bikeinventoryinfo"
-
-(final_bike_historic_trial
- .write
- .format("delta")
- .mode("ignore")
- .saveAsTable(TABLE_NAME)
-)
-
-# COMMAND ----------
-
-(bike_bronze_trial.writeStream
- .format("delta")
- .trigger(once = True)
- .option("checkpointLocation", CHECKPOINT_DIR)
- .toTable(TABLE_NAME)
- .start()
- .awaitTermination()
-)
-
-# COMMAND ----------
-
-display(spark.read.format("delta").table(TABLE_NAME).sort(-col("hour_window")))
-
-# COMMAND ----------
-
-display(spark.read.format("delta").table(TABLE_NAME))
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-#merged_df = final_bike_historic_trial.union(bike_bronze_trial)
-
-# COMMAND ----------
-
-#display(merged_df)
-
-# COMMAND ----------
-
-# MERGING BIKE_BRONZE and FINAL_BIKE_HISTORIC
-
-# COMMAND ----------
-
-# MERGING final_bike_historic and and weather data
-
-# COMMAND ----------
-
-#weather_bike_merged = final_bike_historic.join(nyc_weather_df, (final_bike_historic.hour_window == #nyc_weather_df.dt), how="left")
-#display(weather_bike_merged)
 
 # COMMAND ----------
 
@@ -504,7 +414,3 @@ display(spark.read.format("delta").table(TABLE_NAME))
 
 # Return Success#
 #dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))
-
-# COMMAND ----------
-
-
