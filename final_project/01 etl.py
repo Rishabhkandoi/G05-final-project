@@ -6,19 +6,19 @@
 # Reading Live Data
 
 station_df = spark\
-    .readStream\
+    .read\
     .format("delta")\
     .option("ignoreChanges", "true")\
     .load(BRONZE_STATION_INFO_PATH)
     
 station_status_df = spark\
-    .readStream\
+    .read\
     .format("delta")\
     .option("ignoreChanges", "true")\
     .load(BRONZE_STATION_STATUS_PATH)
     
 weather_df = spark\
-    .readStream\
+    .read\
     .format("delta")\
     .option("ignoreChanges", "true")\
     .load(BRONZE_NYC_WEATHER_PATH)
@@ -48,25 +48,26 @@ station_history = spark\
 # Storing all bronze tables along with appropriate checkpoints
 
 station_df\
-    .writeStream\
+    .write\
     .format("delta")\
     .option("path", REAL_TIME_STATION_INFO_DELTA_DIR)\
-    .option("checkpointLocation", REAL_TIME_STATION_INFO_CHECKPOINT_DIR)\
-    .start()
+    .mode("overwrite")\
+    .save()
+
 
 station_status_df\
-    .writeStream\
+    .write\
     .format("delta")\
     .option("path", REAL_TIME_STATION_STATUS_DELTA_DIR)\
-    .option("checkpointLocation", REAL_TIME_STATION_STATUS_CHECKPOINT_DIR)\
-    .start()
+    .mode("overwrite")\
+    .save()
 
 weather_df\
-    .writeStream\
+    .write\
     .format("delta")\
     .option("path", REAL_TIME_WEATHER_DELTA_DIR)\
-    .option("checkpointLocation", REAL_TIME_WEATHER_CHECKPOINT_DIR)\
-    .start()
+    .mode("overwrite")\
+    .save()
     
 weather_history\
     .writeStream\
@@ -131,6 +132,10 @@ weather_history = spark\
 # Join the two dataframes on the 'station_id' column
 new_df_station = station_df.join(station_status_df, 'station_id')
 
+# COMMAND ----------
+
+
+
 # Select the required columns
 new_df_station = new_df_station.select(
     'station_id', 
@@ -141,10 +146,10 @@ new_df_station = new_df_station.select(
     'lon', 
     'capacity',
     'num_ebikes_available',
-    col('num_bikes_available').alias('bikes_available'), 
-    col('num_docks_available').alias('docks_available'),
-    'is_renting', 
-    'is_returning',
+    'num_bikes_available',
+    'num_docks_available',
+    'num_docks_disabled',
+    'num_bikes_disabled',
     'last_reported'
 )
 
@@ -162,33 +167,62 @@ new_df_station_filter = new_df_station_filter.withColumn("last_reported", date_f
 
 trial = new_df_station_filter.select(
     col('last_reported').alias('hour_window'),
-    col('is_renting').alias('out'), 
-    col('is_returning').alias('in'),
     col('name').alias('station_name'),
     col('short_name').alias('station_id'),
     'lat', 
     col('lon').alias('lng'), 
-    col('bikes_available').alias('avail')
+    'num_ebikes_available',
+    'num_bikes_available',
+    'num_docks_available',
+    'num_docks_disabled',
+    'num_bikes_disabled',
+    'capacity'
+    
 )
-trial = trial.withColumn("diff", col("in") - col("out"))
+#trial = trial.withColumn("diff", col("in") - col("out"))
+trial = trial.withColumn("avail", col("num_ebikes_available")+col("num_bikes_available")+col("num_docks_available")+col("num_docks_disabled")+col("num_bikes_disabled"))
 
 # COMMAND ----------
 
 bike_bronze = trial.select(
     'hour_window',
-    'out', 
-    'in',
     'station_name',
     'station_id',
     'lat', 
     'lng', 
-    'diff',
+    'capacity',
     'avail'
 )
 
 # COMMAND ----------
 
-display(bike_bronze)
+bike_bronze_sorted = bike_bronze.orderBy(col("hour_window"))
+
+# COMMAND ----------
+
+from pyspark.sql.functions import window, last, date_format
+
+df_hourly_availability = (bike_bronze_sorted
+  .groupBy(window("hour_window", "1 hour", "1 hour").alias("window_end"))  
+  .agg(last("avail").alias("last_availability"))
+  .select(date_format("window_end.end", "yyyy-MM-dd HH:mm:ss").alias("hour_window"), "last_availability")
+  .orderBy("hour_window"))
+
+
+# COMMAND ----------
+
+final_stream_bike = df_hourly_availability.select(
+    'hour_window',
+    col('last_availability').alias('avail'),
+)
+
+# COMMAND ----------
+
+display(final_stream_bike)
+
+# COMMAND ----------
+
+#verify kar lena pls
 
 # COMMAND ----------
 
@@ -232,6 +266,10 @@ weather_stream = weather_new.select(
     col("icon"),
     col("rain").cast("double")
 )
+
+# COMMAND ----------
+
+display(weather_stream)
 
 # COMMAND ----------
 
