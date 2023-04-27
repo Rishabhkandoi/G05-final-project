@@ -24,6 +24,9 @@ import itertools
 # Performance metrics
 from sklearn.metrics import mean_absolute_error
 
+# MLFlow Tracking
+from mlflow.tracking.client import MlflowClient
+
 # COMMAND ----------
 
 # Constants
@@ -42,7 +45,16 @@ def extract_params(pr_model):
 # Read datasets
 
 inventory_info = spark.read.format("delta").load(INVENTORY_INFO_DELTA_DIR).select(col("hour_window").alias("ds"), col("diff").alias("y"))
-weather_info = spark.read.format("delta").load(WEATHER_INFO_DELTA_DIR)
+weather_info = spark.read.format("delta").load(WEATHER_INFO_DELTA_DIR).select(col("hour_window").alias("ds"), "temp", "uvi", "visibility", "rain")
+merged_info = inventory_info.join(weather_info, on="ds", how="inner")
+
+# COMMAND ----------
+
+merged_info.rdd.getNumPartitions()
+
+# COMMAND ----------
+
+print(spark.sparkContext.defaultParallelism)
 
 # COMMAND ----------
 
@@ -51,16 +63,27 @@ weather_info = spark.read.format("delta").load(WEATHER_INFO_DELTA_DIR)
 latest_end_timestamp_in_silver_storage = inventory_info.select("ds").sort(desc("ds")).head(1)[0][0]
 time_for_split = (datetime.strptime(latest_end_timestamp_in_silver_storage, TIME_FORMAT) - timedelta(hours=PERIOD_TO_FORECAST_FOR)).strftime(TIME_FORMAT)
 
+merged_info = merged_info.filter(col("ds") <= latest_end_timestamp_in_silver_storage).dropna()
+
 # COMMAND ----------
 
 # Create train-test data
 
-train_data = inventory_info.filter(col("ds") <= time_for_split).toPandas()
-test_data = inventory_info.filter(col("ds") > time_for_split).toPandas()
+train_data = merged_info.filter(col("ds") <= time_for_split).toPandas()
+test_data = merged_info.filter(col("ds") > time_for_split).toPandas()
 x_train, y_train, x_test, y_test = train_data["ds"], train_data["y"], test_data["ds"], test_data["y"]
 
-weather_train_data = weather_info.filter(col("hour_window") <= time_for_split).toPandas()
-weather_test_data = weather_info.filter(col("hour_window") < time_for_split).toPandas()
+# COMMAND ----------
+
+# def fill_nulls(df, column):
+#     w = Window.orderBy("ds")
+#     return df.withColumn(column, lag(column, 1).over(w))
+
+# # Iterate over all columns except the first one and fill null values
+# for column in merged_info.columns[1:]:
+#     joined_df = fill_nulls(merged_info, column)
+
+# joined_df.toPandas().info()
 
 # COMMAND ----------
 
@@ -121,12 +144,12 @@ fig.show()
 
 # Set up parameter grid
 param_grid = {  
-    'changepoint_prior_scale': [0.001],  # , 0.05, 0.08, 0.5
-    'seasonality_prior_scale': [0.01],  # , 1, 5, 10, 12
+    'changepoint_prior_scale': [0.5, 1.5, 2, 5],
+    'seasonality_prior_scale': [0.01, 1, 5, 10, 15],
     'seasonality_mode': ['additive', 'multiplicative'],
-    'yearly_seasonality': [True, False],
+    'yearly_seasonality': [True],
     'weekly_seasonality': [True, False],
-    'daily_seasonality': [True, False]
+    'daily_seasonality': [False]
 }
 
 # Generate all combinations of parameters
@@ -144,7 +167,11 @@ for params in all_params:
         m = Prophet(**params) 
         holidays = pd.DataFrame({"ds": [], "holiday": []})
         m.add_country_holidays(country_name='US')
-        m.fit(train_data) 
+        m.add_regressor('temp')
+        m.add_regressor('uvi')
+        m.add_regressor('visibility')
+        m.add_regressor('rain')
+        m.fit(train_data)
 
         # Cross-validation
         # df_cv = cross_validation(model=m, initial='710 days', period='180 days', horizon = '365 days', parallel="threads")
@@ -213,7 +240,7 @@ results['residual'] = results['yhat'] - results['y']
 fig = px.scatter(
     results, x='yhat', y='residual',
     marginal_y='violin',
-    trendline='ols',
+    trendline='ols'
 )
 fig.show()
 
@@ -222,8 +249,6 @@ fig.show()
 model_details = mlflow.register_model(model_uri=best_params['model'], name=ARTIFACT_PATH)
 
 # COMMAND ----------
-
-from mlflow.tracking.client import MlflowClient
 
 client = MlflowClient()
 
@@ -269,13 +294,73 @@ model_staging = mlflow.prophet.load_model(model_staging_uri)
 
 # COMMAND ----------
 
-# #plot the residuals
-# fig = px.scatter(
-#     results, x='yhat', y='residual',
-#     marginal_y='violin',
-#     trendline='ols',
-# )
-# fig.show()
+latest_version = int(client.get_latest_versions(ARTIFACT_PATH)[0].version)
+
+df_list = []
+for i in range(1, latest_version+1):
+    model_url = client.get_model_version(version=i, name=ARTIFACT_PATH).source
+    loaded_model = mlflow.prophet.load_model(model_url)
+    forecast = loaded_model.predict(test_data)
+    results=forecast[['ds','yhat']].join(train_data, lsuffix='_caller', rsuffix='_other')
+    results['residual'] = results['yhat'] - results['y']
+    df = pd.DataFrame({'name': ['v'+str(i)]*len(results),
+                    'yhat': results['yhat'],
+                    'residual': results['residual']})
+    df_list.append(df)
+
+# model_url_v1 = client.get_model_version(version=1, name=ARTIFACT_PATH).source
+# model_url_v2 = client.get_model_version(version=2, name=ARTIFACT_PATH).source
+# model_url_v3 = client.get_model_version(version=3, name=ARTIFACT_PATH).source
+
+# loaded_model_v1 = mlflow.prophet.load_model(model_url_v1)
+# forecast_v1 = loaded_model_v1.predict(test_data)
+# results_v1=forecast_v1[['ds','yhat']].join(train_data, lsuffix='_caller', rsuffix='_other')
+# results_v1['residual'] = results_v1['yhat'] - results_v1['y']
+
+# loaded_model_v2 = mlflow.prophet.load_model(model_url_v2)
+# forecast_v2 = loaded_model_v2.predict(test_data)
+# results_v2=forecast_v2[['ds','yhat']].join(train_data, lsuffix='_caller', rsuffix='_other')
+# results_v2['residual'] = results_v2['yhat'] - results_v2['y']
+
+# loaded_model_v3 = mlflow.prophet.load_model(model_url_v3)
+# forecast_v3 = loaded_model_v3.predict(test_data)
+# results_v3=forecast_v3[['ds','yhat']].join(train_data, lsuffix='_caller', rsuffix='_other')
+# results_v3['residual'] = results_v3['yhat'] - results_v3['y']
+
+# df1 = pd.DataFrame({'name': ['v1']*len(results_v1),
+#                     'yhat': results_v1['yhat'],
+#                     'residual': results_v1['residual']})
+
+# df2 = pd.DataFrame({'name': ['v2']*len(results_v2),
+#                     'yhat': results_v2['yhat'],
+#                     'residual': results_v2['residual']})
+
+# df3 = pd.DataFrame({'name': ['v3']*len(results_v3),
+#                     'yhat': results_v3['yhat'],
+#                     'residual': results_v3['residual']})
+
+# df = pd.concat([df1, df2, df3])
+df = pd.concat(df_list)
+
+#plot the residuals
+fig = px.scatter(
+    df, x='yhat', y='residual',
+    marginal_y='violin',
+    trendline='ols',
+    color='name'
+)
+fig.show()
+
+# COMMAND ----------
+
+results['yhat_avail'] = np.round(results['yhat']) + 61
+results
+
+# COMMAND ----------
+
+fig = px.line(x=results['ds_caller'], y=results['yhat_avail'])
+fig.add_hline(y=61)
+fig.show()
 
 # COMMAND ----------
 
@@ -287,10 +372,6 @@ model_staging = mlflow.prophet.load_model(model_staging_uri)
 # model = ARIMA(np.array(x_train), order=(24, 2, 1))
 # fit = model.fit()
 # fit.forecast()
-
-# COMMAND ----------
-
-dbutils.widgets.get('04.promote_model')
 
 # COMMAND ----------
 

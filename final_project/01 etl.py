@@ -5,19 +5,19 @@
 
 # Reading Live Data
 
-station_df = spark\
+station_df_data = spark\
     .read\
     .format("delta")\
     .option("ignoreChanges", "true")\
     .load(BRONZE_STATION_INFO_PATH)
     
-station_status_df = spark\
+station_status_df_data = spark\
     .read\
     .format("delta")\
     .option("ignoreChanges", "true")\
     .load(BRONZE_STATION_STATUS_PATH)
     
-weather_df = spark\
+weather_df_data = spark\
     .read\
     .format("delta")\
     .option("ignoreChanges", "true")\
@@ -27,16 +27,17 @@ weather_df = spark\
 
 # Reading Historical Data
 
-weather_history = spark\
-    .read\
+weather_history_data = spark\
+    .readStream\
     .option("inferSchema", "true")\
     .option("header", "true")\
     .option("ignoreChanges", "true")\
     .format("csv")\
-    .load(NYC_WEATHER_FILE_PATH)
+    .load(NYC_WEATHER_FILE_PATH)\
+    .withColumn("visibility", col("visibility").cast("double"))
     
-station_history = spark\
-    .read\
+station_history_data = spark\
+    .readStream\
     .option("inferSchema", "true")\
     .option("header", "true")\
     .option("ignoreChanges", "true")\
@@ -45,94 +46,82 @@ station_history = spark\
 
 # COMMAND ----------
 
-# # Storing all bronze tables along with appropriate checkpoints
+# Storing all bronze tables along with appropriate checkpoints
 
-# station_df_data\
-#     .write\
-#     .format("delta")\
-#     .option("path", REAL_TIME_STATION_INFO_DELTA_DIR)\
-#     .mode("overwrite")\
-#     .save()
+station_df_data\
+    .write\
+    .format("delta")\
+    .option("path", REAL_TIME_STATION_INFO_DELTA_DIR)\
+    .mode("overwrite")\
+    .save()
 
-# station_status_df_data\
-#     .write\
-#     .format("delta")\
-#     .option("path", REAL_TIME_STATION_STATUS_DELTA_DIR)\
-#     .mode("overwrite")\
-#     .save()
+station_status_df_data\
+    .write\
+    .format("delta")\
+    .option("path", REAL_TIME_STATION_STATUS_DELTA_DIR)\
+    .mode("overwrite")\
+    .save()
 
-# weather_df_data\
-#     .write\
-#     .format("delta")\
-#     .option("path", REAL_TIME_WEATHER_DELTA_DIR)\
-#     .mode("overwrite")\
-#     .save()
+weather_df_data\
+    .write\
+    .format("delta")\
+    .option("path", REAL_TIME_WEATHER_DELTA_DIR)\
+    .mode("overwrite")\
+    .save()
     
-# weather_history_data\
-#     .write\
-#     .format("delta")\
-#     .option("path", HISTORIC_WEATHER_DELTA_DIR)\
-#     .mode("overwrite")\
-#     .save()
+weather_history_data\
+    .writeStream\
+    .format("delta")\
+    .option("path", HISTORIC_WEATHER_DELTA_DIR)\
+    .trigger(once = True)\
+    .option("checkpointLocation", HISTORIC_WEATHER_CHECKPOINT_DIR)\
+    .start()
     
-# station_history_data\
-#     .write\
-#     .format("delta")\
-#     .option("path", HISTORIC_STATION_INFO_DELTA_DIR)\
-#     .mode("overwrite")\
-#     .save()
+station_history_data\
+    .writeStream\
+    .format("delta")\
+    .option("path", HISTORIC_STATION_INFO_DELTA_DIR)\
+    .trigger(once = True)\
+    .option("checkpointLocation", HISTORIC_STATION_INFO_CHECKPOINT_DIR)\
+    .start()
 
 # COMMAND ----------
 
-# # Read all bronze tables
+# Read all bronze tables
 
-# station_df = spark\
-#     .read\
-#     .format("delta")\
-#     .option("ignoreChanges", "true")\
-#     .load(REAL_TIME_STATION_INFO_DELTA_DIR)
+station_df = spark\
+    .read\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(REAL_TIME_STATION_INFO_DELTA_DIR)
     
-# station_status_df = spark\
-#     .read\
-#     .format("delta")\
-#     .option("ignoreChanges", "true")\
-#     .load(REAL_TIME_STATION_STATUS_DELTA_DIR)
+station_status_df = spark\
+    .read\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(REAL_TIME_STATION_STATUS_DELTA_DIR)
     
-# weather_df = spark\
-#     .read\
-#     .format("delta")\
-#     .option("ignoreChanges", "true")\
-#     .load(REAL_TIME_WEATHER_DELTA_DIR)
+weather_df = spark\
+    .read\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(REAL_TIME_WEATHER_DELTA_DIR)
 
-# # weather_history = spark\
-# #     .readStream\
-# #     .format("delta")\
-# #     .option("ignoreChanges", "true")\
-# #     .load(HISTORIC_WEATHER_DELTA_DIR)
-    
-# # station_history = spark\
-# #     .readStream\
-# #     .format("delta")\
-# #     .option("ignoreChanges", "true")\
-# #     .load(HISTORIC_STATION_INFO_DELTA_DIR)
+weather_history = spark\
+    .read\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(HISTORIC_WEATHER_DELTA_DIR)
 
-# weather_history = spark\
-#     .read\
-#     .format("delta")\
-#     .load(HISTORIC_WEATHER_DELTA_DIR)
-
-# # station_history = spark\
-# #     .read\
-# #     .format("delta")\
-# #     .load(HISTORIC_STATION_INFO_DELTA_DIR)
+station_history = spark\
+    .read\
+    .format("delta")\
+    .option("ignoreChanges", "true")\
+    .load(HISTORIC_STATION_INFO_DELTA_DIR)
 
 # COMMAND ----------
 
-display(weather_stream)
-
-# COMMAND ----------
-
-# Trensorming Real Time Weather info
+# Transorming Real Time Weather info
 
 weather_stream = weather_df.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss"))
 weather_stream = weather_stream.withColumnRenamed("rain.1h", "rain")
@@ -146,7 +135,7 @@ weather_stream = weather_stream.select(
 
 # COMMAND ----------
 
-# Trensorming Historical Weather info
+# Transorming Historical Weather info
 
 weather_historical = weather_history.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss"))
 
@@ -187,10 +176,10 @@ new_df_station = new_df_station.select(
     'lat', 
     'lon', 
     'capacity',
-    'num_ebikes_available',
+    # 'num_ebikes_available',
     'num_bikes_available',
-    'num_docks_available',
-    'num_docks_disabled',
+    # 'num_docks_available',
+    # 'num_docks_disabled',
     'num_bikes_disabled',
     'last_reported'
 )
@@ -206,16 +195,16 @@ trial = new_df_station_filter.select(
     col('short_name').alias('station_id'),
     'lat', 
     col('lon').alias('lng'), 
-    'num_ebikes_available',
+    # 'num_ebikes_available',
     'num_bikes_available',
-    'num_docks_available',
-    'num_docks_disabled',
+    # 'num_docks_available',
+    # 'num_docks_disabled',
     'num_bikes_disabled',
     'capacity'
     
 )
 #trial = trial.withColumn("diff", col("in") - col("out"))
-trial = trial.withColumn("avail", col("num_ebikes_available")+col("num_bikes_available")+col("num_docks_available")+col("num_docks_disabled")+col("num_bikes_disabled"))
+trial = trial.withColumn("avail", col("num_bikes_available")+col("num_bikes_disabled"))
 
 bike_bronze = trial.select(
     'hour_window',
@@ -253,13 +242,7 @@ final_stream_bike\
 
 # Code to apply transformations in historic data
 
-def apply_transformations(weather_history):
-    
-    # Read Historic data from bronze storage
-    station_history = spark\
-        .read\
-        .format("delta")\
-        .load(HISTORIC_STATION_INFO_DELTA_DIR)
+def apply_transformations(weather_history, station_history):
 
     bike_trip_df = station_history.sort(desc("started_at"))
 
@@ -363,7 +346,7 @@ latest_end_timestamp_in_bronze = station_history.select("ended_at").filter(col("
 
 if latest_start_timestamp_in_bronze >= latest_end_timestamp_in_silver_storage or latest_end_timestamp_in_bronze >= latest_end_timestamp_in_silver_storage:
     print("Overwriting historic data in Silver Storage")
-    final_bike_historic_trial = apply_transformations(weather_history)
+    final_bike_historic_trial = apply_transformations(weather_history, station_history)
     final_bike_historic_trial\
         .write\
         .mode("overwrite")\
@@ -410,7 +393,7 @@ merged_inventory_data\
 
 # COMMAND ----------
 
-#import json
+import json
 
 # Return Success#
-#dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))
+dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))¯
