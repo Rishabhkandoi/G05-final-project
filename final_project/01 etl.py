@@ -46,6 +46,13 @@ station_history_data = spark\
 
 # COMMAND ----------
 
+# Adding only 3 stations so that we can leverage the use of partitioning
+
+station_df_data = station_df_data.filter((col("station_id") == GROUP_STATION_ID) | (col("station_id") == "66de63cd-0aca-11e7-82f6-3863bb44ef7c") | (col("station_id") == "b35ba3c0-d3e8-4b1a-b63b-73a7bb518c9e"))
+station_status_df_data = station_status_df_data.filter((col("station_id") == GROUP_STATION_ID) | (col("station_id") == "66de63cd-0aca-11e7-82f6-3863bb44ef7c") | (col("station_id") == "b35ba3c0-d3e8-4b1a-b63b-73a7bb518c9e"))
+
+# COMMAND ----------
+
 # Storing all bronze tables along with appropriate checkpoints
 
 station_df_data\
@@ -53,6 +60,8 @@ station_df_data\
     .format("delta")\
     .option("path", REAL_TIME_STATION_INFO_DELTA_DIR)\
     .mode("overwrite")\
+    .option("overwriteSchema", "true")\
+    .partitionBy("station_id")\
     .save()
 
 station_status_df_data\
@@ -60,6 +69,8 @@ station_status_df_data\
     .format("delta")\
     .option("path", REAL_TIME_STATION_STATUS_DELTA_DIR)\
     .mode("overwrite")\
+    .option("overwriteSchema", "true")\
+    .partitionBy("station_id")\
     .save()
 
 weather_df_data\
@@ -75,7 +86,7 @@ weather_history_data\
     .option("path", HISTORIC_WEATHER_DELTA_DIR)\
     .trigger(once = True)\
     .option("checkpointLocation", HISTORIC_WEATHER_CHECKPOINT_DIR)\
-    .start()
+    .start().awaitTermination()
     
 station_history_data\
     .writeStream\
@@ -83,7 +94,7 @@ station_history_data\
     .option("path", HISTORIC_STATION_INFO_DELTA_DIR)\
     .trigger(once = True)\
     .option("checkpointLocation", HISTORIC_STATION_INFO_CHECKPOINT_DIR)\
-    .start()
+    .start().awaitTermination()
 
 # COMMAND ----------
 
@@ -121,30 +132,45 @@ station_history = spark\
 
 # COMMAND ----------
 
+# Setting Shuffle Partitions to number of cores
+
+spark.conf.set("spark.sql.shuffle.partitions", spark.sparkContext.defaultParallelism)
+print(spark.conf.get("spark.sql.shuffle.partitions"))
+
+# COMMAND ----------
+
+# WIll apply Z-Ordering on hour column
+
+station_history = station_history.filter((col("start_station_name") == GROUP_STATION_ASSIGNMENT) | (col("end_station_name") == GROUP_STATION_ASSIGNMENT)).withColumn("hour", when(col("start_station_name") == GROUP_STATION_ASSIGNMENT, date_format(col("started_at"), "yyyy-MM-dd HH")).otherwise(date_format(col("ended_at"), "yyyy-MM-dd HH")))
+
+# COMMAND ----------
+
+display(weather_df)
+
+# COMMAND ----------
+
 # Transorming Real Time Weather info
 
-weather_stream = weather_df.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss"))
+weather_stream = weather_df.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss")).withColumn("is_weekend", (dayofweek(col("dt")) == 1) | (dayofweek(col("dt")) == 7)).withColumn("is_weekend", col("is_weekend").cast("int"))
 weather_stream = weather_stream.withColumnRenamed("rain.1h", "rain")
 weather_stream = weather_stream.select(
     col("dt").alias("hour_window").cast("string"),
-    col("temp"),
-    col("uvi"),
-    col("visibility"),
-    col("rain")
+    col("feels_like"),
+    col("clouds"),
+    col("is_weekend")
 )
 
 # COMMAND ----------
 
 # Transorming Historical Weather info
 
-weather_historical = weather_history.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss"))
+weather_historical = weather_history.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss")).withColumn("is_weekend", (dayofweek(col("dt")) == 1) | (dayofweek(col("dt")) == 7)).withColumn("is_weekend", col("is_weekend").cast("int"))
 
 weather_historical = weather_historical.select(
     col("dt").alias("hour_window").cast("string"),
-    col("temp"),
-    col("uvi"),
-    col("visibility"),
-    col("rain_1h").alias("rain"))
+    col("feels_like"),
+    col("clouds"),
+    col("is_weekend"))
 
 # COMMAND ----------
 
@@ -176,10 +202,7 @@ new_df_station = new_df_station.select(
     'lat', 
     'lon', 
     'capacity',
-    # 'num_ebikes_available',
     'num_bikes_available',
-    # 'num_docks_available',
-    # 'num_docks_disabled',
     'num_bikes_disabled',
     'last_reported'
 )
@@ -195,15 +218,12 @@ trial = new_df_station_filter.select(
     col('short_name').alias('station_id'),
     'lat', 
     col('lon').alias('lng'), 
-    # 'num_ebikes_available',
     'num_bikes_available',
-    # 'num_docks_available',
-    # 'num_docks_disabled',
     'num_bikes_disabled',
     'capacity'
     
 )
-#trial = trial.withColumn("diff", col("in") - col("out"))
+
 trial = trial.withColumn("avail", col("num_bikes_available")+col("num_bikes_disabled"))
 
 bike_bronze = trial.select(
@@ -352,6 +372,7 @@ if latest_start_timestamp_in_bronze >= latest_end_timestamp_in_silver_storage or
         .mode("overwrite")\
         .format("delta")\
         .option("path", HISTORIC_INVENTORY_INFO_DELTA_DIR)\
+        .option("zOrderByCol", "hour")\
         .save()
 
 # COMMAND ----------
@@ -396,4 +417,8 @@ merged_inventory_data\
 import json
 
 # Return Success#
-dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))¯
+dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))
+
+# COMMAND ----------
+
+
