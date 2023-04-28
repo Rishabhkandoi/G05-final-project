@@ -241,7 +241,7 @@ cur_version = None
 if promote_model:
     stage = PROD
     cur_version = client.get_latest_versions(ARTIFACT_PATH, stages=[PROD])
-elif best_params['mae'] > latest_staging_mae:
+elif best_params['mae'] < latest_staging_mae:
     stage = STAGING
     cur_version = client.get_latest_versions(ARTIFACT_PATH, stages=[STAGING])
 else:
@@ -315,7 +315,7 @@ final_df = None
 if promote_model:
     forecast_df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']] = get_forecast_df(results, PROD, best_params['mae'])
     final_df = staging_data.union(spark.createDataFrame(forecast_df)) if staging_data else spark.createDataFrame(forecast_df)
-elif best_params['mae'] > latest_staging_mae:
+elif best_params['mae'] < latest_staging_mae:
     forecast_df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']] = get_forecast_df(results, STAGING, best_params['mae'])
     final_df = prod_data.union(spark.createDataFrame(forecast_df)) if prod_data else spark.createDataFrame(forecast_df)
 else:
