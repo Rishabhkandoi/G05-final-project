@@ -45,8 +45,16 @@ def extract_params(pr_model):
 # Read datasets
 
 inventory_info = spark.read.format("delta").load(INVENTORY_INFO_DELTA_DIR).select(col("hour_window").alias("ds"), col("diff").alias("y"))
-weather_info = spark.read.format("delta").load(WEATHER_INFO_DELTA_DIR).select(col("hour_window").alias("ds"), "temp", "uvi", "visibility", "rain")
+weather_info = spark.read.format("delta").load(WEATHER_INFO_DELTA_DIR).select(col("hour_window").alias("ds"), "feels_like", "clouds", "is_weekend")
 merged_info = inventory_info.join(weather_info, on="ds", how="inner")
+
+# COMMAND ----------
+
+display(merged_info.orderBy("ds", ascending=True))
+
+# COMMAND ----------
+
+display(merged_info.orderBy("ds", ascending=False))
 
 # COMMAND ----------
 
@@ -144,12 +152,12 @@ fig.show()
 
 # Set up parameter grid
 param_grid = {  
-    'changepoint_prior_scale': [0.5, 1.5, 2, 5],
-    'seasonality_prior_scale': [0.01, 1, 5, 10, 15],
-    'seasonality_mode': ['additive', 'multiplicative'],
-    'yearly_seasonality': [True],
+    'changepoint_prior_scale': [ 0.0005, 0.001],
+    'seasonality_prior_scale': [1, 10],
+    'seasonality_mode': ['additive'],
+    'yearly_seasonality' : [False],
     'weekly_seasonality': [True, False],
-    'daily_seasonality': [False]
+    'daily_seasonality': [True, False]
 }
 
 # Generate all combinations of parameters
@@ -167,10 +175,9 @@ for params in all_params:
         m = Prophet(**params) 
         holidays = pd.DataFrame({"ds": [], "holiday": []})
         m.add_country_holidays(country_name='US')
-        m.add_regressor('temp')
-        m.add_regressor('uvi')
-        m.add_regressor('visibility')
-        m.add_regressor('rain')
+        #m.add_regressor('feels_like')
+        #m.add_regressor('clouds')
+        #m.add_regressor('is_weekend')
         m.fit(train_data)
 
         # Cross-validation

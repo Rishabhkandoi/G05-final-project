@@ -145,11 +145,12 @@ station_history = station_history.filter((col("start_station_name") == GROUP_STA
 
 # COMMAND ----------
 
+#displaying weather_df
 display(weather_df)
 
 # COMMAND ----------
 
-# Transorming Real Time Weather info
+# Transforming Real Time Weather info
 
 weather_stream = weather_df.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss")).withColumn("is_weekend", (dayofweek(col("dt")) == 1) | (dayofweek(col("dt")) == 7)).withColumn("is_weekend", col("is_weekend").cast("int"))
 weather_stream = weather_stream.withColumnRenamed("rain.1h", "rain")
@@ -160,9 +161,13 @@ weather_stream = weather_stream.select(
     col("is_weekend")
 )
 
+# feels_like, clouds and is_weekend show high correlation than other features
+# feels_like over temp: feels_like is better indicator of how it feels on the body
+# is_weekend: provides insight about trends of weekday bs weekends
+
 # COMMAND ----------
 
-# Transorming Historical Weather info
+# Transforming Historical Weather info
 
 weather_historical = weather_history.withColumn("dt", date_format(from_unixtime(col("dt").cast("long")), "yyyy-MM-dd HH:mm:ss")).withColumn("is_weekend", (dayofweek(col("dt")) == 1) | (dayofweek(col("dt")) == 7)).withColumn("is_weekend", col("is_weekend").cast("int"))
 
@@ -188,7 +193,7 @@ weather_merged\
 
 # COMMAND ----------
 
-# Transorming and saving Real-time Bike Information
+# Transforming and saving Real-time Bike Information
 
 # Join the two dataframes on the 'station_id' column
 new_df_station = station_df.join(station_status_df, 'station_id')
@@ -249,7 +254,7 @@ final_stream_bike = df_hourly_availability.select(
     col('last_availability').alias('avail'),
 )
 
-final_stream_bike = final_stream_bike.withColumn("diff", col("avail") - 61).select("hour_window", "diff")
+final_stream_bike = final_stream_bike.withColumn("diff", 61 - col("avail")).select("hour_window", "diff")
 
 final_stream_bike\
     .write\
@@ -260,7 +265,7 @@ final_stream_bike\
 
 # COMMAND ----------
 
-# Code to apply transformations in historic data
+# Code to apply transformations on historic data
 
 def apply_transformations(weather_history, station_history):
 
@@ -383,10 +388,23 @@ historic_inventory_data = spark.read.format("delta").load(HISTORIC_INVENTORY_INF
 real_time_inventory_data = spark.read.format("delta").load(REAL_TIME_INVENTORY_INFO_DELTA_DIR)
 
 latest_end_timestamp_in_silver_storage = historic_inventory_data.select("hour_window").sort(desc("hour_window")).head(1)[0][0]
-real_time_inventory_data = real_time_inventory_data.filter(col("hour_window") > latest_end_timestamp_in_silver_storage)
+latest_end_timestamp_in_silver_storage
+
+# COMMAND ----------
+
+from pyspark.sql.window import Window
+from pyspark.sql.functions import lag, col
+windowSpec = Window.partitionBy().orderBy("hour_window")
+df_with_lag = real_time_inventory_data.withColumn("lag_diff", lag("diff").over(windowSpec))
+df_with_new_diff = df_with_lag.withColumn("new_diff", col("diff") - col("lag_diff"))
+df_filtered = df_with_new_diff.filter(col("hour_window") > latest_end_timestamp_in_silver_storage)
+df_final = df_filtered.drop('diff', 'lag_diff')
+real_time_inventory_data = df_final.withColumnRenamed('new_diff', 'diff')
+
+# COMMAND ----------
 
 merged_inventory_data = historic_inventory_data.union(real_time_inventory_data)
-
+merged_inventory_data = merged_inventory_data.orderBy("hour_window", ascending=False)
 merged_inventory_data\
     .write\
     .format("delta")\
