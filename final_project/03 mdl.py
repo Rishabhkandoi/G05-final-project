@@ -32,8 +32,8 @@ from mlflow.tracking.client import MlflowClient
 # Fetch Input arguments
 
 # dbutils.widgets.removeAll()
-# dbutils.widgets.dropdown("Promote Model", "No", ["No", "Yes"])
-# dbutils.widgets.text("Hours to forecast", "8")
+dbutils.widgets.dropdown("Promote Model", "No", ["No", "Yes"])
+dbutils.widgets.text("Hours to forecast", "8")
 
 # start_date = str(dbutils.widgets.get('01.start_date'))
 # end_date = str(dbutils.widgets.get('02.end_date'))
@@ -107,12 +107,12 @@ fig.show()
 
 # Set up parameter grid
 param_grid = {  
-    'changepoint_prior_scale': [0.0005],
-    'seasonality_prior_scale': [0.8],
-    'seasonality_mode': ['multiplicative'],
-    'yearly_seasonality' : [False],
+    'changepoint_prior_scale': [0.01],
+    'seasonality_prior_scale': [4],
+    'seasonality_mode': ['additive'],
+    'yearly_seasonality' : [True],
     'weekly_seasonality': [True],
-    'daily_seasonality': [False]
+    'daily_seasonality': [True]
 }
 
 # Generate all combinations of parameters
@@ -130,9 +130,9 @@ for params in all_params:
         m = Prophet(**params) 
         holidays = pd.DataFrame({"ds": [], "holiday": []})
         m.add_country_holidays(country_name='US')
-        #m.add_regressor('feels_like')
-        #m.add_regressor('clouds')
-        #m.add_regressor('is_weekend')
+        m.add_regressor('feels_like')
+        m.add_regressor('clouds')
+        m.add_regressor('is_weekend')
         m.fit(train_data)
 
         # Cross-validation
@@ -153,7 +153,10 @@ for params in all_params:
         y_pred = m.predict(test_data)
 
         mae = mean_absolute_error(y_test, y_pred['yhat'])
-
+        print(params)
+        print(mae)
+        print(y_pred.yhat.describe())
+        print("----------------")
         mlflow.prophet.log_model(m, artifact_path=ARTIFACT_PATH)
         mlflow.log_params(params)
         mlflow.log_metrics({'mae': mae})
@@ -163,6 +166,7 @@ for params in all_params:
         # Save model performance metrics for this combination of hyper parameters
         maes.append((mae, model_uri))
         
+
 
 # COMMAND ----------
 
@@ -201,8 +205,9 @@ prophet_plot2 = loaded_model.plot_components(forecast)
 # COMMAND ----------
 
 # Finding residuals
-
-results = forecast[['ds','yhat']].join(train_data, lsuffix = '_caller', rsuffix = '_other')
+test_data.ds = pd.to_datetime(test_data.ds)
+forecast.ds = pd.to_datetime(forecast.ds)
+results = forecast[['ds','yhat']].merge(test_data,on="ds")
 results['residual'] = results['yhat'] - results['y']
 
 # COMMAND ----------
@@ -235,7 +240,7 @@ client = MlflowClient()
 try:
     latest_staging_mae = model_info.filter(col("tag") == STAGING).select("mae").head(1)[0][0]
 except:
-    latest_staging_mae = 0
+    latest_staging_mae = 999
 
 cur_version = None
 if promote_model:
@@ -276,31 +281,13 @@ print("The current model stage is: '{stage}'".format(stage=model_version_details
 
 # COMMAND ----------
 
-# Latest Model Version
-
-latest_version_info = client.get_latest_versions(ARTIFACT_PATH, stages=["Staging"])
-
-latest_staging_version = latest_version_info[0].version
-
-print("The latest staging version of the model '%s' is '%s'." % (ARTIFACT_PATH, latest_staging_version))
-
-# COMMAND ----------
-
-model_staging_uri = "models:/{model_name}/staging".format(model_name=ARTIFACT_PATH)
-
-print("Loading registered model version from URI: '{model_uri}'".format(model_uri=model_staging_uri))
-
-model_staging = mlflow.prophet.load_model(model_staging_uri)
-
-# COMMAND ----------
-
 # Update Gold Table
 
 def get_forecast_df(results, tag, mae):
     df = results.copy()
     df['tag'] = tag
     df['mae'] = mae
-    return df[['ds_caller', 'y', 'yhat', 'tag', 'residual', 'mae']]
+    return df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']]
 
 try:
     staging_data = model_info.filter(col("tag") == STAGING)

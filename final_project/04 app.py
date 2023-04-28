@@ -124,6 +124,7 @@ hours_to_forecast = int(dbutils.widgets.get("Hours to Forecast"))
 # COMMAND ----------
 
 model_output = model_output_df.toPandas()
+model_output["yhat"] = model_output["yhat"].round()
 model_output["capacity"] = 61
 
 # COMMAND ----------
