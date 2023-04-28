@@ -29,11 +29,29 @@ from mlflow.tracking.client import MlflowClient
 
 # COMMAND ----------
 
+# Fetch Input arguments
+
+# dbutils.widgets.removeAll()
+# dbutils.widgets.dropdown("Promote Model", "No", ["No", "Yes"])
+# dbutils.widgets.text("Hours to forecast", "8")
+
+# start_date = str(dbutils.widgets.get('01.start_date'))
+# end_date = str(dbutils.widgets.get('02.end_date'))
+hours_to_forecast = int(dbutils.widgets.get('Hours to forecast'))
+promote_model = bool(True if str(dbutils.widgets.get('Promote Model')).lower() == 'yes' else False)
+
+print(hours_to_forecast, promote_model)
+
+# COMMAND ----------
+
 # Constants
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-PERIOD_TO_FORECAST_FOR = 172
+PERIOD_TO_FORECAST_FOR = 168 + hours_to_forecast
 ARTIFACT_PATH = GROUP_MODEL_NAME
+STAGING = 'Staging'
+PROD = 'Production'
+ARCHIVE = 'Archived'
 np.random.seed(265)
 
 ## Helper routine to extract the parameters that were used to train a specific instance of the model
@@ -48,21 +66,10 @@ inventory_info = spark.read.format("delta").load(INVENTORY_INFO_DELTA_DIR).selec
 weather_info = spark.read.format("delta").load(WEATHER_INFO_DELTA_DIR).select(col("hour_window").alias("ds"), "feels_like", "clouds", "is_weekend")
 merged_info = inventory_info.join(weather_info, on="ds", how="inner")
 
-# COMMAND ----------
-
-display(merged_info.orderBy("ds", ascending=True))
-
-# COMMAND ----------
-
-display(merged_info.orderBy("ds", ascending=False))
-
-# COMMAND ----------
-
-merged_info.rdd.getNumPartitions()
-
-# COMMAND ----------
-
-print(spark.sparkContext.defaultParallelism)
+try:
+    model_info = spark.read.format("delta").load(MODEL_INFO)
+except:
+    model_info = None
 
 # COMMAND ----------
 
@@ -83,66 +90,14 @@ x_train, y_train, x_test, y_test = train_data["ds"], train_data["y"], test_data[
 
 # COMMAND ----------
 
-# def fill_nulls(df, column):
-#     w = Window.orderBy("ds")
-#     return df.withColumn(column, lag(column, 1).over(w))
-
-# # Iterate over all columns except the first one and fill null values
-# for column in merged_info.columns[1:]:
-#     joined_df = fill_nulls(merged_info, column)
-
-# joined_df.toPandas().info()
-
-# COMMAND ----------
-
 # Suppresses `java_gateway` messages from Prophet as it runs.
 
 logging.getLogger("py4j").setLevel(logging.ERROR)
 
 # COMMAND ----------
 
-# holiday = pd.DataFrame([])
-# for date, name in sorted(holidays.UnitedStates(years=[2021, 2022, 2023]).items()):
-#     holiday = holiday.append(pd.DataFrame({'ds': date, 'holiday': "US-Holidays"}, index=[0]), ignore_index=True)
-# holiday['ds'] = pd.to_datetime(holiday['ds'], format='%Y-%m-%d', errors='ignore')
-
-# holiday.head()
-
-# COMMAND ----------
-
-# prophet_obj = Prophet(holidays=holiday)
-# prophet_obj.fit(prophet_df)
-# prophet_future = prophet_obj.make_future_dataframe(periods=PERIOD_TO_FORECAST_FOR, freq="60min")
-# prophet_future.tail()
-
-# COMMAND ----------
-
-# prophet_forecast = prophet_obj.predict(prophet_future)
-# prophet_forecast[['ds', 'yhat']].tail()
-
-# COMMAND ----------
-
 fig = px.line(train_data, x="ds", y="y", title='Bike Rides')
 fig.show()
-
-# COMMAND ----------
-
-# # Initiate the model
-# baseline_model = Prophet()
-
-# # Fit the model on the training dataset
-# baseline_model.fit(train_data)
-
-# # Cross validation
-# baseline_model_cv = cross_validation(model=baseline_model, initial='510 days', horizon=PERIOD_TO_FORECAST_FOR, parallel="threads")
-# baseline_model_cv.head()
-
-# # Model performance metrics
-# baseline_model_p = performance_metrics(baseline_model_cv, rolling_window=1)
-# baseline_model_p.head()
-
-# # Get the performance value
-# print(f"MAPE of baseline model: {baseline_model_p['mape'].values[0]}")
 
 # COMMAND ----------
 
@@ -152,12 +107,12 @@ fig.show()
 
 # Set up parameter grid
 param_grid = {  
-    'changepoint_prior_scale': [ 0.0005, 0.001],
-    'seasonality_prior_scale': [1, 10],
-    'seasonality_mode': ['additive'],
+    'changepoint_prior_scale': [0.0005],
+    'seasonality_prior_scale': [0.8],
+    'seasonality_mode': ['multiplicative'],
     'yearly_seasonality' : [False],
-    'weekly_seasonality': [True, False],
-    'daily_seasonality': [True, False]
+    'weekly_seasonality': [True],
+    'daily_seasonality': [False]
 }
 
 # Generate all combinations of parameters
@@ -212,6 +167,7 @@ for params in all_params:
 # COMMAND ----------
 
 # Tuning results
+
 tuning_results = pd.DataFrame(all_params)
 tuning_results['mae'] = list(zip(*maes))[0]
 tuning_results['model']= list(zip(*maes))[1]
@@ -222,6 +178,8 @@ best_params
 
 # COMMAND ----------
 
+# Create Forecast
+
 loaded_model = mlflow.prophet.load_model(best_params['model'])
 
 forecast = loaded_model.predict(test_data)
@@ -230,20 +188,27 @@ print(f"forecast:\n${forecast.tail(40)}")
 
 # COMMAND ----------
 
+# Plot forecast
+
 prophet_plot = loaded_model.plot(forecast)
 
 # COMMAND ----------
+
+# Plot each components of the forecast separately
 
 prophet_plot2 = loaded_model.plot_components(forecast)
 
 # COMMAND ----------
 
-results=forecast[['ds','yhat']].join(train_data, lsuffix='_caller', rsuffix='_other')
+# Finding residuals
+
+results = forecast[['ds','yhat']].join(train_data, lsuffix = '_caller', rsuffix = '_other')
 results['residual'] = results['yhat'] - results['y']
 
 # COMMAND ----------
 
-#plot the residuals
+# Plot the residuals
+
 fig = px.scatter(
     results, x='yhat', y='residual',
     marginal_y='violin',
@@ -253,25 +218,51 @@ fig.show()
 
 # COMMAND ----------
 
+# Register Model to MLFlow
+
 model_details = mlflow.register_model(model_uri=best_params['model'], name=ARTIFACT_PATH)
 
 # COMMAND ----------
+
+# Call MLFlow Client
 
 client = MlflowClient()
 
 # COMMAND ----------
 
+# Apply appropriate tag
+
+try:
+    latest_staging_mae = model_info.filter(col("tag") == STAGING).select("mae").head(1)[0][0]
+except:
+    latest_staging_mae = 0
+
+cur_version = None
+if promote_model:
+    stage = PROD
+    cur_version = client.get_latest_versions(ARTIFACT_PATH, stages=[PROD])
+elif best_params['mae'] > latest_staging_mae:
+    stage = STAGING
+    cur_version = client.get_latest_versions(ARTIFACT_PATH, stages=[STAGING])
+else:
+    stage = ARCHIVE
+
+if cur_version:
+    client.transition_model_version_stage(
+        name=GROUP_MODEL_NAME,
+        version=cur_version[0].version,
+        stage=ARCHIVE,
+        )
+
 client.transition_model_version_stage(
-
   name=model_details.name,
-
   version=model_details.version,
-
-  stage='Staging',
-
+  stage=stage,
 )
 
 # COMMAND ----------
+
+# Current Model Stage
 
 model_version_details = client.get_model_version(
 
@@ -284,6 +275,8 @@ model_version_details = client.get_model_version(
 print("The current model stage is: '{stage}'".format(stage=model_version_details.current_stage))
 
 # COMMAND ----------
+
+# Latest Model Version
 
 latest_version_info = client.get_latest_versions(ARTIFACT_PATH, stages=["Staging"])
 
@@ -301,73 +294,52 @@ model_staging = mlflow.prophet.load_model(model_staging_uri)
 
 # COMMAND ----------
 
-latest_version = int(client.get_latest_versions(ARTIFACT_PATH)[0].version)
+# Update Gold Table
 
-df_list = []
-for i in range(1, latest_version+1):
-    model_url = client.get_model_version(version=i, name=ARTIFACT_PATH).source
-    loaded_model = mlflow.prophet.load_model(model_url)
-    forecast = loaded_model.predict(test_data)
-    results=forecast[['ds','yhat']].join(train_data, lsuffix='_caller', rsuffix='_other')
-    results['residual'] = results['yhat'] - results['y']
-    df = pd.DataFrame({'name': ['v'+str(i)]*len(results),
-                    'yhat': results['yhat'],
-                    'residual': results['residual']})
-    df_list.append(df)
+def get_forecast_df(results, tag, mae):
+    df = results.copy()
+    df['tag'] = tag
+    df['mae'] = mae
+    return df[['ds_caller', 'y', 'yhat', 'tag', 'residual', 'mae']]
 
-# model_url_v1 = client.get_model_version(version=1, name=ARTIFACT_PATH).source
-# model_url_v2 = client.get_model_version(version=2, name=ARTIFACT_PATH).source
-# model_url_v3 = client.get_model_version(version=3, name=ARTIFACT_PATH).source
+try:
+    staging_data = model_info.filter(col("tag") == STAGING)
+    prod_data = model_info.filter(col("tag") == PROD)
+except:
+    staging_data = None
+    prod_data = None
 
-# loaded_model_v1 = mlflow.prophet.load_model(model_url_v1)
-# forecast_v1 = loaded_model_v1.predict(test_data)
-# results_v1=forecast_v1[['ds','yhat']].join(train_data, lsuffix='_caller', rsuffix='_other')
-# results_v1['residual'] = results_v1['yhat'] - results_v1['y']
+forecast_df = pd.DataFrame(columns=['ds', 'y', 'yhat', 'tag', 'residual', 'mae'])
 
-# loaded_model_v2 = mlflow.prophet.load_model(model_url_v2)
-# forecast_v2 = loaded_model_v2.predict(test_data)
-# results_v2=forecast_v2[['ds','yhat']].join(train_data, lsuffix='_caller', rsuffix='_other')
-# results_v2['residual'] = results_v2['yhat'] - results_v2['y']
+final_df = None
+if promote_model:
+    forecast_df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']] = get_forecast_df(results, PROD, best_params['mae'])
+    final_df = staging_data.union(spark.createDataFrame(forecast_df)) if staging_data else spark.createDataFrame(forecast_df)
+elif best_params['mae'] > latest_staging_mae:
+    forecast_df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']] = get_forecast_df(results, STAGING, best_params['mae'])
+    final_df = prod_data.union(spark.createDataFrame(forecast_df)) if prod_data else spark.createDataFrame(forecast_df)
+else:
+    pass
 
-# loaded_model_v3 = mlflow.prophet.load_model(model_url_v3)
-# forecast_v3 = loaded_model_v3.predict(test_data)
-# results_v3=forecast_v3[['ds','yhat']].join(train_data, lsuffix='_caller', rsuffix='_other')
-# results_v3['residual'] = results_v3['yhat'] - results_v3['y']
+if final_df:
+    final_df\
+        .write\
+        .format("delta")\
+        .option("path", MODEL_INFO)\
+        .mode("overwrite")\
+        .save()
 
-# df1 = pd.DataFrame({'name': ['v1']*len(results_v1),
-#                     'yhat': results_v1['yhat'],
-#                     'residual': results_v1['residual']})
-
-# df2 = pd.DataFrame({'name': ['v2']*len(results_v2),
-#                     'yhat': results_v2['yhat'],
-#                     'residual': results_v2['residual']})
-
-# df3 = pd.DataFrame({'name': ['v3']*len(results_v3),
-#                     'yhat': results_v3['yhat'],
-#                     'residual': results_v3['residual']})
-
-# df = pd.concat([df1, df2, df3])
-df = pd.concat(df_list)
-
-#plot the residuals
-fig = px.scatter(
-    df, x='yhat', y='residual',
-    marginal_y='violin',
-    trendline='ols',
-    color='name'
-)
-fig.show()
 
 # COMMAND ----------
 
-results['yhat_avail'] = np.round(results['yhat']) + 61
-results
+# results['yhat_avail'] = np.round(results['yhat']) + 61
+# results
 
 # COMMAND ----------
 
-fig = px.line(x=results['ds_caller'], y=results['yhat_avail'])
-fig.add_hline(y=61)
-fig.show()
+# fig = px.line(x=results['ds_caller'], y=results['yhat_avail'])
+# fig.add_hline(y=61)
+# fig.show()
 
 # COMMAND ----------
 
@@ -382,17 +354,7 @@ fig.show()
 
 # COMMAND ----------
 
-# start_date = str(dbutils.widgets.get('01.start_date'))
-# end_date = str(dbutils.widgets.get('02.end_date'))
-# hours_to_forecast = int(dbutils.widgets.get('03.hours_to_forecast'))
-# promote_model = bool(True if str(dbutils.widgets.get('04.promote_model')).lower() == 'yes' else False)
+import json
 
-# print(start_date,end_date,hours_to_forecast, promote_model)
-# print("YOUR CODE HERE...")
-
-# COMMAND ----------
-
-# import json
-
-# # Return Success
-# dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))
+# Return Success
+dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))
