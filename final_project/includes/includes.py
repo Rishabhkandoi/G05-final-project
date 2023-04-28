@@ -157,6 +157,13 @@ dbutils.fs.mkdirs(MODEL_CHECKPOINT_DIR)
 
 # COMMAND ----------
 
+#adding lat,long variables for Group 5 station
+STATION_LAT = 40.6859296
+STATION_LON = -74.00242364
+
+
+# COMMAND ----------
+
 # To enable inferring schema for historic data when reading with readStream
 spark.conf.set("spark.sql.streaming.schemaInference", True)
 
