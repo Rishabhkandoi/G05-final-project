@@ -12,19 +12,19 @@ from datetime import datetime as dt
 from datetime import timedelta
 import json
 
-dbutils.widgets.removeAll()
+# dbutils.widgets.removeAll()
 
-# dbutils.widgets.text('01.start_date', "2021-10-01")
-# dbutils.widgets.text('02.end_date', "2023-03-01")
-dbutils.widgets.dropdown('Hours to Forecast', '4', ['4', '8', '12', '24', '48'])
-dbutils.widgets.dropdown('Promote Model', 'No', ['No', 'Yes'])
+# # dbutils.widgets.text('01.start_date', "2021-10-01")
+# # dbutils.widgets.text('02.end_date', "2023-03-01")
+# dbutils.widgets.dropdown('Hours to Forecast', '4', ['4', '8', '12', '24', '48'])
+# dbutils.widgets.dropdown('Promote Model', 'No', ['No', 'Yes'])
 
 # start_date = str(dbutils.widgets.get('01.start_date'))
 # end_date = str(dbutils.widgets.get('02.end_date'))
-hours_to_forecast = int(dbutils.widgets.get('03.hours_to_forecast'))
-promote_model = str(dbutils.widgets.get('04.promote_model'))
+hours_to_forecast = int(dbutils.widgets.get('Hours to Forecast'))
+promote_model = str(dbutils.widgets.get('Promote Model'))
 
-print(start_date,end_date,hours_to_forecast, promote_model)
+print(hours_to_forecast, promote_model)
 
 # COMMAND ----------
 

@@ -29,29 +29,12 @@ from mlflow.tracking.client import MlflowClient
 
 # COMMAND ----------
 
-# Fetch Input arguments
-
-# dbutils.widgets.removeAll()
-dbutils.widgets.dropdown("Promote Model", "No", ["No", "Yes"])
-dbutils.widgets.text("Hours to forecast", "8")
-
-# start_date = str(dbutils.widgets.get('01.start_date'))
-# end_date = str(dbutils.widgets.get('02.end_date'))
-hours_to_forecast = int(dbutils.widgets.get('Hours to forecast'))
-promote_model = bool(True if str(dbutils.widgets.get('Promote Model')).lower() == 'yes' else False)
-
-print(hours_to_forecast, promote_model)
-
-# COMMAND ----------
-
 # Constants
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-PERIOD_TO_FORECAST_FOR = 168 + hours_to_forecast
+PAST_HOURS_TO_PREDICT = 168
+PERIOD_TO_FORECAST_FOR = PAST_HOURS_TO_PREDICT + HOURS_TO_FORECAST
 ARTIFACT_PATH = GROUP_MODEL_NAME
-STAGING = 'Staging'
-PROD = 'Production'
-ARCHIVE = 'Archived'
 np.random.seed(265)
 
 ## Helper routine to extract the parameters that were used to train a specific instance of the model
@@ -243,7 +226,7 @@ except:
     latest_staging_mae = 999
 
 cur_version = None
-if promote_model:
+if PROMOTE_MODEL:
     stage = PROD
     cur_version = client.get_latest_versions(ARTIFACT_PATH, stages=[PROD])
 elif best_params['mae'] < latest_staging_mae:
@@ -299,7 +282,7 @@ except:
 forecast_df = pd.DataFrame(columns=['ds', 'y', 'yhat', 'tag', 'residual', 'mae'])
 
 final_df = None
-if promote_model:
+if PROMOTE_MODEL:
     forecast_df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']] = get_forecast_df(results, PROD, best_params['mae'])
     final_df = staging_data.union(spark.createDataFrame(forecast_df)) if staging_data else spark.createDataFrame(forecast_df)
 elif best_params['mae'] < latest_staging_mae:

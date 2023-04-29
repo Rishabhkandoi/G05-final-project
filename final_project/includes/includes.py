@@ -94,9 +94,9 @@ spark.sql(f"USE {GROUP_DB_NAME}")
 # Create directories
 
 # Creating Bronze/Silver/Gold Driectories
-BRONZE_DIR = GROUP_DATA_PATH + "/bronze"
-SILVER_DIR = GROUP_DATA_PATH + "/silver"
-GOLD_DIR = GROUP_DATA_PATH + "/gold"
+BRONZE_DIR = GROUP_DATA_PATH + "bronze"
+SILVER_DIR = GROUP_DATA_PATH + "silver"
+GOLD_DIR = GROUP_DATA_PATH + "gold"
 
 # Creating bronze storage structure
 REAL_TIME_STATION_STATUS_DELTA_DIR = BRONZE_DIR + "/real_time_station_status"
@@ -157,10 +157,21 @@ dbutils.fs.mkdirs(MODEL_CHECKPOINT_DIR)
 
 # COMMAND ----------
 
-#adding lat,long variables for Group 5 station
+# Adding our station info
 STATION_LAT = 40.6859296
 STATION_LON = -74.00242364
+STATION_CAPACITY = 61
 
+# Widget Inputs
+dbutils.widgets.dropdown('Hours to Forecast', '4', ['4', '8', '12', '24', '48'])
+dbutils.widgets.dropdown('Promote Model', 'No', ['No', 'Yes'])
+HOURS_TO_FORECAST = int(dbutils.widgets.get('Hours to Forecast'))
+PROMOTE_MODEL = bool(True if str(dbutils.widgets.get('Promote Model')).lower() == 'yes' else False)
+
+# Model Tags
+STAGING = 'Staging'
+PROD = 'Production'
+ARCHIVE = 'Archived'
 
 # COMMAND ----------
 
@@ -187,6 +198,25 @@ displayHTML(f"""
 <tr><td>GROUP_STATION_ASSIGNMENT</td><td>{GROUP_STATION_ASSIGNMENT}</td><td>Station Name to be modeled by this group</td></tr>
 <tr><td>GROUP_DATA_PATH</td><td>{GROUP_DATA_PATH}</td><td>Path to store all of your group data files (delta ect)</td></tr>
 <tr><td>GROUP_MODEL_NAME</td><td>{GROUP_MODEL_NAME}</td><td>Mlflow Model Name to be used to register your model</td></tr>
-<tr><td>GROUP_DB_NAME</td><td>{GROUP_DB_NAME}</td><td>Group Database to store any managed tables (pre-defined for you)</td></tr>
+<tr><td>BRONZE_DIR</td><td>{BRONZE_DIR}</td><td>Bronze Directory (Defined by us)</td></tr>
+<tr><td>SILVER_DIR</td><td>{SILVER_DIR}</td><td>Silver Directory (Defined by us)</td></tr>
+<tr><td>GOLD_DIR</td><td>{GOLD_DIR}</td><td>Gold Directory (Defined by us)</td></tr>
+<tr><td>REAL_TIME_STATION_STATUS_DELTA_DIR</td><td>{REAL_TIME_STATION_STATUS_DELTA_DIR}</td><td>Streaming Station Status Delta Directory (Defined by us)</td></tr>
+<tr><td>REAL_TIME_STATION_INFO_DELTA_DIR</td><td>{REAL_TIME_STATION_INFO_DELTA_DIR}</td><td>Streaming Station Info Delta Directory (Defined by us)</td></tr>
+<tr><td>REAL_TIME_WEATHER_DELTA_DIR</td><td>{REAL_TIME_WEATHER_DELTA_DIR}</td><td>Streaming Weather Info Delta Directory (Defined by us)</td></tr>
+<tr><td>HISTORIC_STATION_INFO_DELTA_DIR</td><td>{HISTORIC_STATION_INFO_DELTA_DIR}</td><td>Historic Station Info Delta Directory (Defined by us)</td></tr>
+<tr><td>HISTORIC_WEATHER_DELTA_DIR</td><td>{HISTORIC_WEATHER_DELTA_DIR}</td><td>Historic Weather Info Delta Directory (Defined by us)</td></tr>
+<tr><td>REAL_TIME_INVENTORY_INFO_DELTA_DIR</td><td>{REAL_TIME_INVENTORY_INFO_DELTA_DIR}</td><td>Streaming Inventory Info (after transformation) Delta Directory (Defined by us)</td></tr>
+<tr><td>HISTORIC_INVENTORY_INFO_DELTA_DIR</td><td>{HISTORIC_INVENTORY_INFO_DELTA_DIR}</td><td>Historic Inventory Info (after transformation) Delta Directory (Defined by us)</td></tr>
+<tr><td>INVENTORY_INFO_DELTA_DIR</td><td>{INVENTORY_INFO_DELTA_DIR}</td><td>Merged Inventory Info (after transformation) Delta Directory (Defined by us)</td></tr>
+<tr><td>MODEL_INFO</td><td>{MODEL_INFO}</td><td>Model Info Delta Directory (Defined by us)</td></tr>
+<tr><td>STATION_LAT</td><td>{STATION_LAT}</td><td>Group Station Latitude (Defined by us)</td></tr>
+<tr><td>STATION_LON</td><td>{STATION_LON}</td><td>Group Station Longitude (Defined by us)</td></tr>
+<tr><td>STATION_CAPACITY</td><td>{STATION_CAPACITY}</td><td>Group Station Capacity (Defined by us)</td></tr>
+<tr><td>HOURS_TO_FORECAST</td><td>{HOURS_TO_FORECAST}</td><td>Widget Input for hours to forecast (Defined by us)</td></tr>
+<tr><td>PROMOTE_MODEL</td><td>{PROMOTE_MODEL}</td><td>Widget Input for promote model (Defined by us)</td></tr>
+<tr><td>STAGING</td><td>{STAGING}</td><td>Staging tag (Defined by us)</td></tr>
+<tr><td>PROD</td><td>{PROD}</td><td>Production tag (Defined by us)</td></tr>
+<tr><td>ARCHIVE</td><td>{ARCHIVE}</td><td>Archive tag (Defined by us)</td></tr>
 </table>
 """)
