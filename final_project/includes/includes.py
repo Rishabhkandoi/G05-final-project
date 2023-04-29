@@ -158,8 +158,8 @@ dbutils.fs.mkdirs(MODEL_CHECKPOINT_DIR)
 # COMMAND ----------
 
 # Adding our station info
-STATION_LAT = 40.6859296
-STATION_LON = -74.00242364
+STATION_LAT = 40.734814
+STATION_LON = -73.992085
 STATION_CAPACITY = 61
 
 # Widget Inputs

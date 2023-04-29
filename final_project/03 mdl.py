@@ -32,6 +32,8 @@ from mlflow.tracking.client import MlflowClient
 # Constants
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+HOURS_TO_FORECAST = 8
+MIN_HOURS_TO_FORECAST_IN_FUTURE = 4
 PAST_HOURS_TO_PREDICT = 168
 PERIOD_TO_FORECAST_FOR = PAST_HOURS_TO_PREDICT + HOURS_TO_FORECAST
 ARTIFACT_PATH = GROUP_MODEL_NAME
@@ -47,7 +49,7 @@ def extract_params(pr_model):
 
 inventory_info = spark.read.format("delta").load(INVENTORY_INFO_DELTA_DIR).select(col("hour_window").alias("ds"), col("diff").alias("y"))
 weather_info = spark.read.format("delta").load(WEATHER_INFO_DELTA_DIR).select(col("hour_window").alias("ds"), "feels_like", "clouds", "is_weekend")
-merged_info = inventory_info.join(weather_info, on="ds", how="inner")
+merged_info = weather_info.join(inventory_info, on="ds", how="left")
 
 try:
     model_info = spark.read.format("delta").load(MODEL_INFO)
@@ -59,9 +61,10 @@ except:
 # Get Split time based upon period to forecast
 
 latest_end_timestamp_in_silver_storage = inventory_info.select("ds").sort(desc("ds")).head(1)[0][0]
-time_for_split = (datetime.strptime(latest_end_timestamp_in_silver_storage, TIME_FORMAT) - timedelta(hours=PERIOD_TO_FORECAST_FOR)).strftime(TIME_FORMAT)
+time_for_split = (datetime.strptime(latest_end_timestamp_in_silver_storage, TIME_FORMAT) - timedelta(hours=PAST_HOURS_TO_PREDICT + MIN_HOURS_TO_FORECAST_IN_FUTURE)).strftime(TIME_FORMAT)
+latest_timestamp_for_weather_data = (datetime.strptime(latest_end_timestamp_in_silver_storage, TIME_FORMAT) + timedelta(hours=HOURS_TO_FORECAST - MIN_HOURS_TO_FORECAST_IN_FUTURE)).strftime(TIME_FORMAT)
 
-merged_info = merged_info.filter(col("ds") <= latest_end_timestamp_in_silver_storage).dropna()
+merged_info = merged_info.filter(col("ds") <= latest_timestamp_for_weather_data)
 
 # COMMAND ----------
 
@@ -90,8 +93,8 @@ fig.show()
 
 # Set up parameter grid
 param_grid = {  
-    'changepoint_prior_scale': [0.01],
-    'seasonality_prior_scale': [4],
+    'changepoint_prior_scale': [0.01, 0.005],
+    'seasonality_prior_scale': [4, 8],
     'seasonality_mode': ['additive'],
     'yearly_seasonality' : [True],
     'weekly_seasonality': [True],
@@ -133,13 +136,9 @@ for params in all_params:
         # print(f"Logged Metrics: \n{json.dumps(metrics, indent=2)}")
         # print(f"Logged Params: \n{json.dumps(params, indent=2)}")
 
-        y_pred = m.predict(test_data)
+        y_pred = m.predict(test_data.dropna())
 
-        mae = mean_absolute_error(y_test, y_pred['yhat'])
-        print(params)
-        print(mae)
-        print(y_pred.yhat.describe())
-        print("----------------")
+        mae = mean_absolute_error(y_test.dropna(), y_pred['yhat'])
         mlflow.prophet.log_model(m, artifact_path=ARTIFACT_PATH)
         mlflow.log_params(params)
         mlflow.log_metrics({'mae': mae})
@@ -148,8 +147,6 @@ for params in all_params:
 
         # Save model performance metrics for this combination of hyper parameters
         maes.append((mae, model_uri))
-        
-
 
 # COMMAND ----------
 
@@ -299,28 +296,6 @@ if final_df:
         .mode("overwrite")\
         .save()
 
-
-# COMMAND ----------
-
-# results['yhat_avail'] = np.round(results['yhat']) + 61
-# results
-
-# COMMAND ----------
-
-# fig = px.line(x=results['ds_caller'], y=results['yhat_avail'])
-# fig.add_hline(y=61)
-# fig.show()
-
-# COMMAND ----------
-
-# from statsmodels.tsa.arima.model import ARIMA
-
-# x_train = train_data[train_data['hour_window'] < '2023-02-20 00:00:00'][['hour_window', 'diff']]
-# x_train.index = x_train['hour_window']
-# x_train = x_train.drop('hour_window', axis=1)
-# model = ARIMA(np.array(x_train), order=(24, 2, 1))
-# fit = model.fit()
-# fit.forecast()
 
 # COMMAND ----------
 
