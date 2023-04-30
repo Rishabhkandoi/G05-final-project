@@ -32,7 +32,6 @@ from mlflow.tracking.client import MlflowClient
 # Constants
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-HOURS_TO_FORECAST = 8
 MIN_HOURS_TO_FORECAST_IN_FUTURE = 4
 PAST_HOURS_TO_PREDICT = 168
 PERIOD_TO_FORECAST_FOR = PAST_HOURS_TO_PREDICT + HOURS_TO_FORECAST
@@ -93,8 +92,8 @@ fig.show()
 
 # Set up parameter grid
 param_grid = {  
-    'changepoint_prior_scale': [0.01, 0.005],
-    'seasonality_prior_scale': [4, 8],
+    'changepoint_prior_scale': [0.01],
+    'seasonality_prior_scale': [4],
     'seasonality_mode': ['additive'],
     'yearly_seasonality' : [True],
     'weekly_seasonality': [True],
@@ -223,9 +222,16 @@ except:
     latest_staging_mae = 999
 
 cur_version = None
-if PROMOTE_MODEL:
-    stage = PROD
+if PROMOTE_MODEL and latest_staging_mae != 999:
+    stage = STAGING
     cur_version = client.get_latest_versions(ARTIFACT_PATH, stages=[PROD])
+    stage_version = client.get_latest_versions(ARTIFACT_PATH, stages=[STAGING])
+    if stage_version:
+        client.transition_model_version_stage(
+            name=GROUP_MODEL_NAME,
+            version=stage_version[0].version,
+            stage=PROD,
+        )
 elif best_params['mae'] < latest_staging_mae:
     stage = STAGING
     cur_version = client.get_latest_versions(ARTIFACT_PATH, stages=[STAGING])
@@ -279,9 +285,10 @@ except:
 forecast_df = pd.DataFrame(columns=['ds', 'y', 'yhat', 'tag', 'residual', 'mae'])
 
 final_df = None
-if PROMOTE_MODEL:
-    forecast_df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']] = get_forecast_df(results, PROD, best_params['mae'])
-    final_df = staging_data.union(spark.createDataFrame(forecast_df)) if staging_data else spark.createDataFrame(forecast_df)
+if PROMOTE_MODEL and staging_data:
+    forecast_df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']] = get_forecast_df(results, STAGING, best_params['mae'])
+    staging_data = staging_data.withColumn("tag", lit(PROD))
+    final_df = staging_data.union(spark.createDataFrame(forecast_df))
 elif best_params['mae'] < latest_staging_mae:
     forecast_df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']] = get_forecast_df(results, STAGING, best_params['mae'])
     final_df = prod_data.union(spark.createDataFrame(forecast_df)) if prod_data else spark.createDataFrame(forecast_df)

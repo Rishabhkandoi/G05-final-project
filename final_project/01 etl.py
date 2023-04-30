@@ -3,6 +3,23 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC # Setting Shuffle Partitions to number of cores
+
+# COMMAND ----------
+
+# Setting Shuffle Partitions to number of cores
+
+spark.conf.set("spark.sql.shuffle.partitions", spark.sparkContext.defaultParallelism)
+print(spark.conf.get("spark.sql.shuffle.partitions"))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Bronze Data Dictionary
+
+# COMMAND ----------
+
 # Reading Live Data
 
 station_df_data = spark\
@@ -98,6 +115,79 @@ station_history_data\
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### Streaming Station Info Table
+# MAGIC
+# MAGIC - <b>Primary use case</b>: To fetch the capacity of a particular station.
+# MAGIC - <b>Data updation frequency</b>: Data Source is updated in every 30min, but we implemented it with a simple read, and thus it would get updated in our bronze table every time this notebook is run.
+# MAGIC - <b>Data format</b>: Source and destination both are in delta format.
+# MAGIC - <b>Benefit</b>: This table is simply replicated at our end without any changes for being fail-safe at any moment in time.
+# MAGIC - <b>Partitioning</b>: To make the system scalable, the data data is partitioned at station level so that any query related to a particular station can be looked for in a single delta file, and thus aggregating all individual transformations at the end. Since there is no particular use case to have any interaction among multiple stations, it is best to partition likewise. Also, since our use case is limited to a single station, we have filtered the source dataset to have only 3 stations (including ours), and thus only 3 individual delta files would be created without spending much time.
+
+# COMMAND ----------
+
+station_df_data.printSchema()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Streaming Station Status Table
+# MAGIC - <b>Primary use case</b>: To fetch the current status (availability of bikes) at a particular station.
+# MAGIC - <b>Data updation frequency</b>: Data Source is updated in every 30min, but we implemented it with a simple read, and thus it would get updated in our bronze table every time this notebook is run.
+# MAGIC - <b>Data format</b>: Source and destination both are in delta format.
+# MAGIC - <b>Benefit</b>: This table is simply replicated at our end without any changes for being fail-safe at any moment in time.
+# MAGIC - <b>Partitioning</b>: To make the system scalable, the data data is partitioned at station level so that any query related to a particular station can be looked for in a single delta file, and thus aggregating all individual transformations at the end. Since there is no particular use case to have any interaction among multiple stations, it is best to partition likewise. Also, since our use case is limited to a single station, we have filtered the source dataset to have only 3 stations (including ours), and thus only 3 individual delta files would be created without spending much time.
+
+# COMMAND ----------
+
+station_status_df_data.printSchema()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Streaming Weather Table
+# MAGIC - <b>Primary use case</b>: To fetch the current weather information (temp, visibility, rain, etc) in New York City, at hourly level.
+# MAGIC - <b>Data updation frequency</b>: Data Source is updated in every 30min, but we implemented it with a simple read, and thus it would get updated in our bronze table every time this notebook is run.
+# MAGIC - <b>Data format</b>: Source and destination both are in delta format.
+# MAGIC - <b>Benefit</b>: This table is simply replicated at our end without any changes for being fail-safe at any moment in time.
+
+# COMMAND ----------
+
+weather_df_data.printSchema()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Historic Station Status Table
+# MAGIC - <b>Primary use case</b>: To fetch the number of bikes availability at a particular station, in a particular time window.
+# MAGIC - <b>Data updation frequency</b>: Since it is implemented with readStream, any new file added in the data path will get updated at our end once this notebook is run. The stream is configured to be triggered only once in order to avoid handling data de-duplicacy explicitly, and limit the CPU usage indefinitely. Since the frequency of dropping any new file in the data path would be something like once a month, it was best to apply the constraint of triggering only once.
+# MAGIC - <b>Data format</b>: Source is csv format and destination is in delta format.
+# MAGIC - <b>Benefit</b>: This table is simply replicated at our end by converting from csv to delta format without any data level changes for being fail-safe at any moment in time.
+
+# COMMAND ----------
+
+station_history_data.printSchema()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Historic Weather Info Table
+# MAGIC - <b>Primary use case</b>: To fetch the historic weather information (temp, visibility, rain, etc) in New York City, at hourly level.
+# MAGIC - <b>Data updation frequency</b>: Since it is implemented with readStream, any new file added in the data path will get updated at our end once this notebook is run. The stream is configured to be triggered only once in order to avoid handling data de-duplicacy explicitly, and limit the CPU usage indefinitely. Since the frequency of dropping any new file in the data path would be something like once a month, it was best to apply the constraint of triggering only once.
+# MAGIC - <b>Data format</b>: Source is csv format and destination is in delta format.
+# MAGIC - <b>Benefit</b>: This table is simply replicated at our end by converting from csv to delta format without any data level changes for being fail-safe at any moment in time.
+
+# COMMAND ----------
+
+weather_history_data.printSchema()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Silver Table Definitions
+
+# COMMAND ----------
+
 # Read all bronze tables
 
 station_df = spark\
@@ -132,21 +222,36 @@ station_history = spark\
 
 # COMMAND ----------
 
-# Setting Shuffle Partitions to number of cores
-
-spark.conf.set("spark.sql.shuffle.partitions", spark.sparkContext.defaultParallelism)
-print(spark.conf.get("spark.sql.shuffle.partitions"))
+# MAGIC %md
+# MAGIC #### Creating a new column for storing date at hourly format, in station history table, to enable optimized querying with the use of Z-Ordering.
 
 # COMMAND ----------
 
-# WIll apply Z-Ordering on hour column
+# Will apply Z-Ordering on hour column
 
 station_history = station_history.filter((col("start_station_name") == GROUP_STATION_ASSIGNMENT) | (col("end_station_name") == GROUP_STATION_ASSIGNMENT)).withColumn("hour", when(col("start_station_name") == GROUP_STATION_ASSIGNMENT, date_format(col("started_at"), "yyyy-MM-dd HH")).otherwise(date_format(col("ended_at"), "yyyy-MM-dd HH")))
 
 # COMMAND ----------
 
-#displaying weather_df
-display(weather_df)
+# MAGIC %md
+# MAGIC ### Weather Info Transformation from Bronze to Silver
+# MAGIC
+# MAGIC #### Columns defined
+# MAGIC - <b>Timestamp (hour_window)</b>: Converted Unix Timestamp to readable time format (data_type=string).
+# MAGIC - <b>Is Weekend (is_weekend)</b>: By extracting day of the week from the date column defined above, Saturday and Sunday are classified as 1, while remaining as 0 (data_type=integer).
+# MAGIC - <b>Temperature (feels_like)</b>: Same as already present in the table (data_type=double).
+# MAGIC - <b>Clouds (clouds)</b>: Same as already present in the table (data_type=long).
+# MAGIC
+# MAGIC #### Reasoning
+# MAGIC - feels_like, clouds and is_weekend show high correlation than other features
+# MAGIC - feels_like over temp: feels_like is better indicator of how it feels on the body
+# MAGIC - is_weekend: provides insight about trends of weekday vs weekends
+# MAGIC
+# MAGIC #### Steps
+# MAGIC - Transforming historic and stream weather tables with respect to the column definitions defined above.
+# MAGIC - Fetching the latest date-time from historic transformed table.
+# MAGIC - Filtering the streaming transformed weather table for date greater than the timestamp defined in the previous step.
+# MAGIC - Merging both the transformed tables thus formed.
 
 # COMMAND ----------
 
@@ -160,10 +265,6 @@ weather_stream = weather_stream.select(
     col("clouds"),
     col("is_weekend")
 )
-
-# feels_like, clouds and is_weekend show high correlation than other features
-# feels_like over temp: feels_like is better indicator of how it feels on the body
-# is_weekend: provides insight about trends of weekday bs weekends
 
 # COMMAND ----------
 
@@ -190,6 +291,28 @@ weather_merged\
     .option("path", WEATHER_INFO_DELTA_DIR)\
     .mode("overwrite")\
     .save()
+
+# COMMAND ----------
+
+weather_merged.printSchema()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Streaming Bike Info Transformation from Bronze to Silver
+# MAGIC
+# MAGIC #### Columns defined
+# MAGIC - <b>Timestamp (hour_window)</b>: Converted Unix Timestamp to readable time format (data_type=string). It is the end-time of the hourly window.
+# MAGIC - <b>Remaining Capacity (diff)</b>: It is defined by number of bikes available and number of bikes disabled for the latest time slot in the hourly window, and it's difference with the total capacity of the station (data_type=long).
+# MAGIC
+# MAGIC #### Reasoning
+# MAGIC - Hour window: Since the weather info is at hourly level, with weather features strongly affecting ride count as will be seen in EDA, the bike information is also aggregated at an hourly level.
+# MAGIC - Diff: Number of bikes available and disabled when added across all timestamps showed a good distribution to be around the total capacity of the station, and thus was used to calculate the total number of bikes available at the station. This value was then subtracted from the total capactity of the station to provide the remaining capacity of the station.
+# MAGIC
+# MAGIC #### Steps
+# MAGIC - Transforming the date column.
+# MAGIC - Aggregating at the hourly window at extracting the last timestamp from each individual aggregation group of hourly window.
+# MAGIC - Applying maths as defined above to calculate the remaining capacity of the station for that hourly window.
 
 # COMMAND ----------
 
@@ -262,6 +385,38 @@ final_stream_bike\
     .option("path", REAL_TIME_INVENTORY_INFO_DELTA_DIR)\
     .mode("overwrite")\
     .save()
+
+# COMMAND ----------
+
+final_stream_bike.printSchema()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Historic Bike Info Transformation from Bronze to Silver
+# MAGIC
+# MAGIC #### Columns defined
+# MAGIC - <b>Timestamp (hour_window)</b>: Converted Unix Timestamp to readable time format (data_type=string). It is the end-time of the hourly window.
+# MAGIC - <b>Inventory Change (diff)</b>: For the hourly window, it is defined by total number of incoming bikes (end_station as ours) minus total number of the outgoing bikes (start_station as ours) (data_type=long).
+# MAGIC
+# MAGIC #### Reasoning
+# MAGIC - Hour window: Since the weather info is at hourly level, with weather features strongly affecting ride count as will be seen in EDA, the bike information is also aggregated at an hourly level.
+# MAGIC - Diff: Since there was no information on the initial bikes available, it was not possible to calculate the absolute number of available bikes at any time frame. So, the difference between incoming and outgoing bikes was calculated, which is nothing but inventory change in any hour window, irrespective of the initial number of available bikes.
+# MAGIC
+# MAGIC #### Steps
+# MAGIC - Transforming the date column.
+# MAGIC - Forming the hourly window by splitting the data with pairs of (start-time, start-station), (end-time, end-station). Since any row having the start station as ours, the end station information is not very useful as of now, and similarly the case with the other split, and thus it helped performing aggregations separately for creating the hour window on each split.
+# MAGIC - Perform aggregation on both the splits individually based upon the hour window formation, and thus counting the ride count in the aggregation process. For the (start-time, start-station) split, number of ride counts will be evaluated from "out" column while "in" column will be used in the other split.
+# MAGIC - Since there are various hour timestamp for which data might be missing, a dummy dataframe was created for each hour right from the earliest start-time to the latest end-time, each with 0 ride count. This would help in maintaining value for each hour.
+# MAGIC - All three dataframes thus formed will be merged, with the logic of "in" (2nd split) - "out" (first split) + 0 (dummy). This will give the value of inventory change for each hourly window.
+# MAGIC
+# MAGIC #### Additional Logic for performance improvement
+# MAGIC - Since history data is likely to be updated once in a month or two to keep it upto date, there would be some data with some additional timestamps each time this is done.
+# MAGIC - Thus, simply tracking if there is any additional timestamp detected in the bronze data, when compared to the data already stored in the Silver Table (by comparing latest timestamp from the bronze storage, with the latest timestamp from the silver storage), it would indicate the need to perform the write operation, otherwise just ignore the transformations.
+# MAGIC - This would allow all transformations to happen only when any new data arrives, which is a rare event, and thus a whole piece of transformations can be avoided in usual scenario.
+# MAGIC
+# MAGIC #### Z-Order Implementation
+# MAGIC - Since the most critical and heavy query here would be to perform aggregation on the hourly window, so the new feature created earlier ("Hour Timestamp") is used for Z-order optimization so that the aggregations inside the hour window would be quick.
 
 # COMMAND ----------
 
@@ -363,7 +518,8 @@ def apply_transformations(weather_history, station_history):
 # Overwrite the historic transformed data in silver storage if there is any new data according to the timestamp
 
 try:
-    latest_end_timestamp_in_silver_storage = spark.read.format("delta").load(HISTORIC_INVENTORY_INFO_DELTA_DIR).select("hour_window").sort(desc("hour_window")).head(1)[0][0]
+    final_bike_historic_trial = spark.read.format("delta").load(HISTORIC_INVENTORY_INFO_DELTA_DIR)
+    latest_end_timestamp_in_silver_storage = final_bike_historic_trial.select("hour_window").sort(desc("hour_window")).head(1)[0][0]
 except:
     latest_end_timestamp_in_silver_storage = '2003-02-28 13:33:07'
 latest_start_timestamp_in_bronze = station_history.select("started_at").filter(col("start_station_name") == GROUP_STATION_ASSIGNMENT).sort(desc("started_at")).head(1)[0][0]
@@ -379,6 +535,28 @@ if latest_start_timestamp_in_bronze >= latest_end_timestamp_in_silver_storage or
         .option("path", HISTORIC_INVENTORY_INFO_DELTA_DIR)\
         .option("zOrderByCol", "hour")\
         .save()
+
+# COMMAND ----------
+
+final_bike_historic_trial.printSchema()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Inventory Info (Silver Storage) - Merging Historic and Streaming Bike Info
+# MAGIC
+# MAGIC #### Columns defined
+# MAGIC - <b>Timestamp (hour_window)</b>: Converted Unix Timestamp to readable time format (data_type=string). It is the end-time of the hourly window.
+# MAGIC - <b>Inventory Change (diff)</b>: For the hourly window, it is defined as the change in inventory (data_type=long).
+# MAGIC
+# MAGIC #### Reasoning (Primary Use Case)
+# MAGIC - It can be used directly for modeling purpose.
+# MAGIC
+# MAGIC #### Steps
+# MAGIC - Fetching the latest hour_window from historic bike info silver storage.
+# MAGIC - Calculating inventory change for the streaming data (by lagged difference in the remaining capacities at each hour window), to format it in the same way as the historic data before merging them.
+# MAGIC - Filtering the streaming transformed weather table for date greater than the timestamp defined in the previous step.
+# MAGIC - Merging both the transformed tables thus formed.
 
 # COMMAND ----------
 
@@ -415,20 +593,31 @@ merged_inventory_data\
 
 # COMMAND ----------
 
-# dbutils.widgets.text("01.start_date", "2023-04-10", "Start Date")
-# dbutils.widgets.text("02.end_date", "2023-05-06", "End Date")
-# dbutils.widgets.text("03.hours_to_forecast", "6", "Hours Forecast")
-# dbutils.widgets.text("04.promote_model", "yes", "Promote Model")
+# MAGIC %md
+# MAGIC # Gold Table (Model Info)
+# MAGIC
+# MAGIC #### Columns
+# MAGIC - <b>Timestamp (ds)</b>: Hourly Timestamps (date_type=timestamp).
+# MAGIC - <b>Original Inventory Change (y)</b>: Original value of diff from INVENTORY_INFO table created above (data_type=double).
+# MAGIC - <b>Forecasted Inventory Change (yhat)</b> Forecasted values of inventory change (data_type=double).
+# MAGIC - <b>Residual (residual)</b> Difference between y and yhat (data_type=double).
+# MAGIC - <b>Tag (tag)</b> Staging / Production / Archival (data_type=string).
+# MAGIC - <b>Metric (mae)</b> Mean Absolute Error value (data_type=double).
+# MAGIC
+# MAGIC #### Reasoning
+# MAGIC - Promote Model Use Case: Used in the final application to show comparison between staging and production residuals. This helps in deciding whether to promote the staging model to production or not.
+# MAGIC - Capacity Utilization: Used in the final application to forecast whether the total number of bikes at a station is over-stock or under-stock in the scheduled hours to forecast. This would help to maintain the stock appropriately ahead of time.
+# MAGIC - Metric usage: Mean absolute error would be used from the table with respect to the staging tag in order to transition any current mlflow experiment to staging by comparing the mae value of the current mlflow experiment and the value from the gold table.
+# MAGIC
+# MAGIC #### Steps
+# MAGIC - Created in mdl file.
+# MAGIC - Once any mlflow experiment gets completed, if based upon user input or metric value (mae), the tag of the experiment is Staging or Production, the gold table needs to be updated with appropriate values.
+# MAGIC - If the tag is Staging, then simply extract the production related data from the gold table, and merge it with the new forecasted values for the staging, and overwrite the gold table thus formed. 
+# MAGIC - If the tag is Production, then simply extract the staging related data from the gold table, and merge it with the new forecasted values for the production, and overwrite the gold table thus formed. 
 
 # COMMAND ----------
 
-# start_date = str(dbutils.widgets.get('01.start_date'))
-# end_date = str(dbutils.widgets.get('02.end_date'))
-# hours_to_forecast = int(dbutils.widgets.get('03.hours_to_forecast'))
-# promote_model = bool(True if str(dbutils.widgets.get('04.promote_model')).lower() == 'yes' else False)
-
-# print(start_date,end_date,hours_to_forecast, promote_model)
-# print("YOUR CODE HERE...")
+spark.read.format("delta").load(MODEL_INFO).printSchema()
 
 # COMMAND ----------
 
@@ -436,7 +625,3 @@ import json
 
 # Return Success#
 dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))
-
-# COMMAND ----------
-
-

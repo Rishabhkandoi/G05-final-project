@@ -61,3 +61,7 @@ result = dbutils.notebook.run("04 app", 3600, {"Hours to Forecast":hours_to_fore
 
 # Check the results
 assert json.loads(result)["exit_code"] == "OK", "Data Preparation Failed!" # Check to see that it worked
+
+# COMMAND ----------
+
+
