@@ -163,7 +163,7 @@ STATION_LON = -73.992085
 STATION_CAPACITY = 61
 
 # Widget Inputs
-dbutils.widgets.dropdown('Hours to Forecast', '4', ['4', '8', '12', '24', '48'])
+dbutils.widgets.dropdown('Hours to Forecast', '48', ['4', '8', '12', '24', '48'])
 dbutils.widgets.dropdown('Promote Model', 'No', ['No', 'Yes'])
 HOURS_TO_FORECAST = int(dbutils.widgets.get('Hours to Forecast'))
 PROMOTE_MODEL = bool(True if str(dbutils.widgets.get('Promote Model')).lower() == 'yes' else False)

@@ -16,8 +16,8 @@ import json
 
 # # dbutils.widgets.text('01.start_date', "2021-10-01")
 # # dbutils.widgets.text('02.end_date', "2023-03-01")
-# dbutils.widgets.dropdown('Hours to Forecast', '4', ['4', '8', '12', '24', '48'])
-# dbutils.widgets.dropdown('Promote Model', 'No', ['No', 'Yes'])
+dbutils.widgets.dropdown('Hours to Forecast', '48', ['4', '8', '12', '24', '48'])
+dbutils.widgets.dropdown('Promote Model', 'No', ['No', 'Yes'])
 
 # start_date = str(dbutils.widgets.get('01.start_date'))
 # end_date = str(dbutils.widgets.get('02.end_date'))
