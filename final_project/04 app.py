@@ -3,21 +3,6 @@
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC Each run of the notebook will update/display the following:  
-# MAGIC ■ Current timestamp when the notebook is run (now)  
-# MAGIC ■ Production Model version  
-# MAGIC ■ Staging Model version  
-# MAGIC ■ Station name and a map location (marker)  
-# MAGIC ■ Current weather (temp and precip)  
-# MAGIC ■ Total docks at this station  
-# MAGIC ■ Total bikes available at this station  
-# MAGIC ■ Forecast the available bikes for the next 4 hours.  
-# MAGIC ■ Highlight any stock out or full station conditions over the predicted period.  
-# MAGIC ■ Monitor the performance of your staging and production models using an appropriate residual plot that illustrates the error in your forecasts.
-
-# COMMAND ----------
-
 #libraries to be imported
 import plotly.express as px
 import pandas as pd
@@ -38,6 +23,7 @@ hours_to_forecast = HOURS_TO_FORECAST
 
 currentdate = pd.Timestamp.now(tz='US/Eastern').round(freq="H")
 fmt = '%Y-%m-%d %H:%M:%S'
+currenthour = currentdate.strftime("%Y-%m-%d %H") 
 currentdate = currentdate.strftime(fmt) 
 print("The current timestamp is:",currentdate)
 
@@ -87,7 +73,7 @@ displayHTML(iframe)
 
 # COMMAND ----------
 
-weather_data = spark.read.format("delta").load(REAL_TIME_WEATHER_DELTA_DIR).withColumnRenamed("rain.1h", "rain").select("time","temp",'humidity',"rain").toPandas()
+weather_data = spark.read.format("delta").load(REAL_TIME_WEATHER_DELTA_DIR).withColumnRenamed("rain.1h", "rain").select("time","temp",'humidity',"pressure","rain","wind_speed","clouds").toPandas()
 print("Current Weather:")
 print(weather_data[weather_data.time==currentdate].reset_index(drop=True))
 
@@ -103,13 +89,12 @@ print("Station capacity is",STATION_CAPACITY)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ■ Total bikes available at this station
+# MAGIC ■ Total bikes available at this station with different bike types and disabled bikes.
 
 # COMMAND ----------
 
-real_tm_data  = spark.read.format("delta").load(REAL_TIME_INVENTORY_INFO_DELTA_DIR).toPandas()
-current_avails = 61 - real_tm_data[real_tm_data.hour_window == currentdate]["diff"].values
-print("Current total bikes available at the station:",current_avails[0])
+temp_df_data = spark.read.format("delta").load(REAL_TIME_STATION_STATUS_DELTA_DIR).filter(col("station_id") == GROUP_STATION_ID).withColumn("last_reported", date_format(from_unixtime(col("last_reported").cast("long")), "yyyy-MM-dd HH:mm:ss")).sort(desc("last_reported")).select("last_reported","num_bikes_disabled","num_bikes_available","num_ebikes_available","num_scooters_available")
+display(temp_df_data.filter(col("last_reported") <= currenthour).sort(desc("last_reported")).head(1))
 
 # COMMAND ----------
 
