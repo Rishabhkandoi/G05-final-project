@@ -3,6 +3,14 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC # Agenda for this notebook
+# MAGIC - To understand the underlying correlation between the trip and weather data.  
+# MAGIC - To uncover the seasonality pattern of trip data.  
+# MAGIC - Insights gathered from this workbook are applied while modelling and hyper-parameter tuning.
+
+# COMMAND ----------
+
 #importing packages that are to used for EDA
 import datetime
 from pyspark.sql.functions import year, month, dayofmonth,concat_ws,col,sum, max, min, avg, count,from_unixtime, date_format,lit,to_date
@@ -18,7 +26,7 @@ from plotly.subplots import make_subplots
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Reading both the historical and bronze files for EDA
+# MAGIC #### Reading both the historical and bronze files for EDA
 
 # COMMAND ----------
 
@@ -31,7 +39,7 @@ df_nyc_weather = spark.read.format("delta").load(HISTORIC_WEATHER_DELTA_DIR)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Filtering the entire historical dataset for our assigned station. Creating two different subsets with assigned stations as start station and end station. Merging the two subsets for EDA.
+# MAGIC #### Filtering the entire historical dataset for our assigned station. Creating two different subsets with assigned stations as start station and end station. Merging the two subsets for EDA.
 
 # COMMAND ----------
 
@@ -50,7 +58,7 @@ relevant_bike_df = bike_end.union(bike_start)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Adding some transformations like date conversion and formatting.
+# MAGIC #### Adding some transformations like date conversion and formatting.
 
 # COMMAND ----------
 

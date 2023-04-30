@@ -4,6 +4,15 @@
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC # Agenda for this notebook
+# MAGIC - Set Partitions.
+# MAGIC - Set Bronze, Silver and Gold Directories.
+# MAGIC - Create bronze and silver tables, along with properly documented storage and transformations strategies.
+# MAGIC - Create end table for merged inventory bike info and merged weather info to be used in modeling.
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC # Setting Shuffle Partitions to number of cores
 
 # COMMAND ----------
