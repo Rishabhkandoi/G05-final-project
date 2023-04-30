@@ -1,9 +1,17 @@
 # Databricks notebook source
+# Import Statements
+
 import pandas as pd
 import requests
 import json
 import datetime
 import time
+import numpy as np
+
+from pyspark.sql.functions import *
+from pyspark.sql import Window
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
 # COMMAND ----------
 
@@ -37,6 +45,10 @@ GROUPS_STATION_ASSIGNMENT = {'G01':'W 21 St & 6 Ave',
  'G12':'11 Ave & W 41 St',
  'G13':'Lafayette St & E 8 St',
  'GXX':'Lafayette St & E 8 St'}
+
+# COMMAND ----------
+
+GROUP_STATION_ID = "b30815c0-99b6-451b-be15-902992cb8abb"
 
 # COMMAND ----------
 
@@ -79,6 +91,98 @@ spark.sql(f"USE {GROUP_DB_NAME}")
 
 # COMMAND ----------
 
+# Create directories
+
+# Creating Bronze/Silver/Gold Driectories
+BRONZE_DIR = GROUP_DATA_PATH + "bronze"
+SILVER_DIR = GROUP_DATA_PATH + "silver"
+GOLD_DIR = GROUP_DATA_PATH + "gold"
+
+# Creating bronze storage structure
+REAL_TIME_STATION_STATUS_DELTA_DIR = BRONZE_DIR + "/real_time_station_status"
+REAL_TIME_STATION_INFO_DELTA_DIR = BRONZE_DIR + "/real_time_station_info"
+REAL_TIME_WEATHER_DELTA_DIR = BRONZE_DIR + "/real_time_weather"
+HISTORIC_STATION_INFO_DELTA_DIR = BRONZE_DIR + "/historic_station_info"
+HISTORIC_WEATHER_DELTA_DIR = BRONZE_DIR + "/historic_weather"
+
+# Creating checkpoints for bronze data
+REAL_TIME_STATION_STATUS_CHECKPOINT_DIR = REAL_TIME_STATION_STATUS_DELTA_DIR + "/checkpoints"
+REAL_TIME_STATION_INFO_CHECKPOINT_DIR = REAL_TIME_STATION_INFO_DELTA_DIR + "/checkpoints"
+REAL_TIME_WEATHER_CHECKPOINT_DIR = REAL_TIME_WEATHER_DELTA_DIR + "/checkpoints"
+HISTORIC_STATION_INFO_CHECKPOINT_DIR = HISTORIC_STATION_INFO_DELTA_DIR + "/checkpoints"
+HISTORIC_WEATHER_CHECKPOINT_DIR = HISTORIC_WEATHER_DELTA_DIR + "/checkpoints"
+
+# Creating Silver storage structure
+REAL_TIME_INVENTORY_INFO_DELTA_DIR = SILVER_DIR + "/real_time_inventory_info"
+HISTORIC_INVENTORY_INFO_DELTA_DIR = SILVER_DIR + "/historic_inventory_info"
+INVENTORY_INFO_DELTA_DIR = SILVER_DIR + "/inventory_info"
+WEATHER_INFO_DELTA_DIR = SILVER_DIR + "/weather_info"
+
+# Creating checkpoints for silver data
+REAL_TIME_INVENTORY_INFO_CHECKPOINT_DIR = REAL_TIME_INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+HISTORIC_INVENTORY_INFO_CHECKPOINT_DIR = HISTORIC_INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+INVENTORY_INFO_CHECKPOINT_DIR = INVENTORY_INFO_DELTA_DIR + "/checkpoints"
+WEATHER_INFO_CHECKPOINT_DIR = WEATHER_INFO_DELTA_DIR + "/checkpoints"
+
+# Creating Gold storage structure
+MODEL_INFO = GOLD_DIR + "/model_info"
+
+# Creating checkpoints for gold data
+MODEL_CHECKPOINT_DIR = MODEL_INFO + "/checkpoints"
+
+# Running mkdir for all above directories
+dbutils.fs.mkdirs(BRONZE_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_STATUS_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_WEATHER_DELTA_DIR)
+dbutils.fs.mkdirs(HISTORIC_STATION_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(HISTORIC_WEATHER_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_STATUS_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(REAL_TIME_STATION_INFO_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(REAL_TIME_WEATHER_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(HISTORIC_STATION_INFO_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(HISTORIC_WEATHER_CHECKPOINT_DIR)
+
+dbutils.fs.mkdirs(SILVER_DIR)
+dbutils.fs.mkdirs(REAL_TIME_INVENTORY_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(HISTORIC_INVENTORY_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(REAL_TIME_INVENTORY_INFO_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(HISTORIC_INVENTORY_INFO_CHECKPOINT_DIR)
+dbutils.fs.mkdirs(INVENTORY_INFO_DELTA_DIR)
+dbutils.fs.mkdirs(INVENTORY_INFO_CHECKPOINT_DIR)
+
+dbutils.fs.mkdirs(GOLD_DIR)
+dbutils.fs.mkdirs(MODEL_INFO)
+dbutils.fs.mkdirs(MODEL_CHECKPOINT_DIR)
+
+# COMMAND ----------
+
+# Adding our station info
+STATION_LAT = 40.734814
+STATION_LON = -73.992085
+STATION_CAPACITY = 61
+
+# Widget Inputs
+dbutils.widgets.dropdown('Hours to Forecast', '48', ['4', '8', '12', '24', '48'])
+dbutils.widgets.dropdown('Promote Model', 'No', ['No', 'Yes'])
+HOURS_TO_FORECAST = int(dbutils.widgets.get('Hours to Forecast'))
+PROMOTE_MODEL = bool(True if str(dbutils.widgets.get('Promote Model')).lower() == 'yes' else False)
+
+# Model Tags
+STAGING = 'Staging'
+PROD = 'Production'
+ARCHIVE = 'Archived'
+
+# COMMAND ----------
+
+# To enable inferring schema for historic data when reading with readStream
+spark.conf.set("spark.sql.streaming.schemaInference", True)
+
+# To disable format check while writing delta
+spark.conf.set("spark.databricks.delta.formatCheck.enabled", False)
+
+# COMMAND ----------
+
 # DBTITLE 1,Display the Project Global Variables
 displayHTML(f"""
 <H1>VERY IMPORTANT TO UNDERSTAND THE USE OF THESE VARIABLES!<br> Please ask if you are confused about their use.</H1>
@@ -94,6 +198,25 @@ displayHTML(f"""
 <tr><td>GROUP_STATION_ASSIGNMENT</td><td>{GROUP_STATION_ASSIGNMENT}</td><td>Station Name to be modeled by this group</td></tr>
 <tr><td>GROUP_DATA_PATH</td><td>{GROUP_DATA_PATH}</td><td>Path to store all of your group data files (delta ect)</td></tr>
 <tr><td>GROUP_MODEL_NAME</td><td>{GROUP_MODEL_NAME}</td><td>Mlflow Model Name to be used to register your model</td></tr>
-<tr><td>GROUP_DB_NAME</td><td>{GROUP_DB_NAME}</td><td>Group Database to store any managed tables (pre-defined for you)</td></tr>
+<tr><td>BRONZE_DIR</td><td>{BRONZE_DIR}</td><td>Bronze Directory (Defined by us)</td></tr>
+<tr><td>SILVER_DIR</td><td>{SILVER_DIR}</td><td>Silver Directory (Defined by us)</td></tr>
+<tr><td>GOLD_DIR</td><td>{GOLD_DIR}</td><td>Gold Directory (Defined by us)</td></tr>
+<tr><td>REAL_TIME_STATION_STATUS_DELTA_DIR</td><td>{REAL_TIME_STATION_STATUS_DELTA_DIR}</td><td>Streaming Station Status Delta Directory (Defined by us)</td></tr>
+<tr><td>REAL_TIME_STATION_INFO_DELTA_DIR</td><td>{REAL_TIME_STATION_INFO_DELTA_DIR}</td><td>Streaming Station Info Delta Directory (Defined by us)</td></tr>
+<tr><td>REAL_TIME_WEATHER_DELTA_DIR</td><td>{REAL_TIME_WEATHER_DELTA_DIR}</td><td>Streaming Weather Info Delta Directory (Defined by us)</td></tr>
+<tr><td>HISTORIC_STATION_INFO_DELTA_DIR</td><td>{HISTORIC_STATION_INFO_DELTA_DIR}</td><td>Historic Station Info Delta Directory (Defined by us)</td></tr>
+<tr><td>HISTORIC_WEATHER_DELTA_DIR</td><td>{HISTORIC_WEATHER_DELTA_DIR}</td><td>Historic Weather Info Delta Directory (Defined by us)</td></tr>
+<tr><td>REAL_TIME_INVENTORY_INFO_DELTA_DIR</td><td>{REAL_TIME_INVENTORY_INFO_DELTA_DIR}</td><td>Streaming Inventory Info (after transformation) Delta Directory (Defined by us)</td></tr>
+<tr><td>HISTORIC_INVENTORY_INFO_DELTA_DIR</td><td>{HISTORIC_INVENTORY_INFO_DELTA_DIR}</td><td>Historic Inventory Info (after transformation) Delta Directory (Defined by us)</td></tr>
+<tr><td>INVENTORY_INFO_DELTA_DIR</td><td>{INVENTORY_INFO_DELTA_DIR}</td><td>Merged Inventory Info (after transformation) Delta Directory (Defined by us)</td></tr>
+<tr><td>MODEL_INFO</td><td>{MODEL_INFO}</td><td>Model Info Delta Directory (Defined by us)</td></tr>
+<tr><td>STATION_LAT</td><td>{STATION_LAT}</td><td>Group Station Latitude (Defined by us)</td></tr>
+<tr><td>STATION_LON</td><td>{STATION_LON}</td><td>Group Station Longitude (Defined by us)</td></tr>
+<tr><td>STATION_CAPACITY</td><td>{STATION_CAPACITY}</td><td>Group Station Capacity (Defined by us)</td></tr>
+<tr><td>HOURS_TO_FORECAST</td><td>{HOURS_TO_FORECAST}</td><td>Widget Input for hours to forecast (Defined by us)</td></tr>
+<tr><td>PROMOTE_MODEL</td><td>{PROMOTE_MODEL}</td><td>Widget Input for promote model (Defined by us)</td></tr>
+<tr><td>STAGING</td><td>{STAGING}</td><td>Staging tag (Defined by us)</td></tr>
+<tr><td>PROD</td><td>{PROD}</td><td>Production tag (Defined by us)</td></tr>
+<tr><td>ARCHIVE</td><td>{ARCHIVE}</td><td>Archive tag (Defined by us)</td></tr>
 </table>
 """)
