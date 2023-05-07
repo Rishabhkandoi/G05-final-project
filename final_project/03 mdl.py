@@ -3,6 +3,18 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC # Agenda for this notebook
+# MAGIC - Leverage inventory info and weather info delta tables in silver storage.
+# MAGIC - Merge the data extracted in the previous step and split it into training and test data. Test data can be prepared by forecasting inventory change for 168 hours (1 week prior) along with user-defined hours to forecast in the future.
+# MAGIC - Implement Prophet along with hyperparameter tuning, with all progress being tracked by MLFlow.
+# MAGIC - Extract the best parameters based upon Mean Absolute Error, and register the model to MLFlow with those parameters.
+# MAGIC - Provide appropriate tag for the model registered in MLFlow (logic discussed below).
+# MAGIC - Show some visualizations related to residual plot, and plot sub-components like trend and seasonality.
+# MAGIC - Store the residuals and related information to the gold storage.
+
+# COMMAND ----------
+
 # Import Statements
 
 from datetime import datetime, timedelta
@@ -29,10 +41,18 @@ from mlflow.tracking.client import MlflowClient
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ##### Use case of the constant variables defined below
+# MAGIC - TIME_FORMAT: To keep the time format constant across all datetime based operations. It is the same time format as available with us in inventory info silver table.
+# MAGIC - MIN_HOURS_TO_FORECAST_IN_FUTURE: This is the forecasted time frame for which we have data arriving in streaming bike information in silver storage.
+# MAGIC - PAST_HOURS_TO_PREDICT: Timestamps to predict in the past (will always be 1 week from current time).
+# MAGIC - ARTIFACT_PATH: Same as GROUP_MODEL_NAME defined already in includes.
+
+# COMMAND ----------
+
 # Constants
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-HOURS_TO_FORECAST = 8
 MIN_HOURS_TO_FORECAST_IN_FUTURE = 4
 PAST_HOURS_TO_PREDICT = 168
 PERIOD_TO_FORECAST_FOR = PAST_HOURS_TO_PREDICT + HOURS_TO_FORECAST
@@ -76,6 +96,11 @@ x_train, y_train, x_test, y_test = train_data["ds"], train_data["y"], test_data[
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC #### Now the train dataset contains the merged data (bike info + weather info) upto 1 week prior, while the test data contains merged data starting from 1 week prior upto the user-defined hours to forecast in the future.
+
+# COMMAND ----------
+
 # Suppresses `java_gateway` messages from Prophet as it runs.
 
 logging.getLogger("py4j").setLevel(logging.ERROR)
@@ -93,8 +118,8 @@ fig.show()
 
 # Set up parameter grid
 param_grid = {  
-    'changepoint_prior_scale': [0.01, 0.005],
-    'seasonality_prior_scale': [4, 8],
+    'changepoint_prior_scale': [0.01],
+    'seasonality_prior_scale': [4],
     'seasonality_mode': ['additive'],
     'yearly_seasonality' : [True],
     'weekly_seasonality': [True],
@@ -172,6 +197,11 @@ print(f"forecast:\n${forecast.tail(40)}")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC #### Forecast has been created with the model from best parameters extracted above. Now below shown are some visualizations, and this need to be registered with MLFlow.
+
+# COMMAND ----------
+
 # Plot forecast
 
 prophet_plot = loaded_model.plot(forecast)
@@ -215,6 +245,14 @@ client = MlflowClient()
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC #### Applying appropriate tag for the model just registered in MLFlow
+# MAGIC - In case of promote model = True, simply pick the staging version and promote that to Production. Also, the current production model needs to be transitioned to archived in this case, while the current model registered above will be tagged as staging. If there is no staging version already present at the time of promotion of model, nothing would happen.
+# MAGIC - If the model is not being promoted, the decision lies whether to tag the model as staging or archived. The deciding factor considered here is the metric (Mean Absolute Error) instead of blindly transitioning the latest version to staging. So, comparing the MAE value from previous staging model (stored in gold table), if the current registered model has lesser MAE, it would be transitioned to staging, otherwise will be tagged as archived. When transitioning the current model to staging, the previous staging version needs to tarnsitioned to archived.
+# MAGIC - If both the above cases are not applicable, the default tag for the model would be archived.
+
+# COMMAND ----------
+
 # Apply appropriate tag
 
 try:
@@ -223,9 +261,16 @@ except:
     latest_staging_mae = 999
 
 cur_version = None
-if PROMOTE_MODEL:
-    stage = PROD
+if PROMOTE_MODEL and latest_staging_mae != 999:
+    stage = STAGING
     cur_version = client.get_latest_versions(ARTIFACT_PATH, stages=[PROD])
+    stage_version = client.get_latest_versions(ARTIFACT_PATH, stages=[STAGING])
+    if stage_version:
+        client.transition_model_version_stage(
+            name=GROUP_MODEL_NAME,
+            version=stage_version[0].version,
+            stage=PROD,
+        )
 elif best_params['mae'] < latest_staging_mae:
     stage = STAGING
     cur_version = client.get_latest_versions(ARTIFACT_PATH, stages=[STAGING])
@@ -261,6 +306,14 @@ print("The current model stage is: '{stage}'".format(stage=model_version_details
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC #### Strategy to update the gold table
+# MAGIC - In case of promote_model = True, simply update the tag for staging data in the gold table to production, and extract that in a separate dataframe. Merge this dataframe with the forecasted values tagged with staging, and store the result in the gold table. If there is no staging data at the time of promotion of model, nothing would happen.
+# MAGIC - In case the model is tagged as staging using the logic already discussed above, simply extract the production related data from the gold table in a separate dataframe and merge it with the forecasted values of the current registered model tagged with staging, and store the result in the gold table.
+# MAGIC - If none of the above cases is applicable, there is no affect on gold table, and it will remain untouched.
+
+# COMMAND ----------
+
 # Update Gold Table
 
 def get_forecast_df(results, tag, mae):
@@ -279,9 +332,10 @@ except:
 forecast_df = pd.DataFrame(columns=['ds', 'y', 'yhat', 'tag', 'residual', 'mae'])
 
 final_df = None
-if PROMOTE_MODEL:
-    forecast_df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']] = get_forecast_df(results, PROD, best_params['mae'])
-    final_df = staging_data.union(spark.createDataFrame(forecast_df)) if staging_data else spark.createDataFrame(forecast_df)
+if PROMOTE_MODEL and staging_data:
+    forecast_df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']] = get_forecast_df(results, STAGING, best_params['mae'])
+    staging_data = staging_data.withColumn("tag", lit(PROD))
+    final_df = staging_data.union(spark.createDataFrame(forecast_df))
 elif best_params['mae'] < latest_staging_mae:
     forecast_df[['ds', 'y', 'yhat', 'tag', 'residual', 'mae']] = get_forecast_df(results, STAGING, best_params['mae'])
     final_df = prod_data.union(spark.createDataFrame(forecast_df)) if prod_data else spark.createDataFrame(forecast_df)

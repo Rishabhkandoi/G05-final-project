@@ -3,6 +3,14 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC # Agenda for this notebook
+# MAGIC - To understand the underlying correlation between the trip and weather data.  
+# MAGIC - To uncover the seasonality pattern of trip data.  
+# MAGIC - Insights gathered from this workbook are applied while modelling and hyper-parameter tuning.
+
+# COMMAND ----------
+
 #importing packages that are to used for EDA
 import datetime
 from pyspark.sql.functions import year, month, dayofmonth,concat_ws,col,sum, max, min, avg, count,from_unixtime, date_format,lit,to_date
@@ -12,12 +20,13 @@ import plotly.graph_objects as go
 import numpy as np
 from pyspark.sql.functions import *
 from pyspark.sql import functions as F
+from plotly.subplots import make_subplots
 
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Reading both the historical and bronze files for EDA
+# MAGIC #### Reading both the historical and bronze files for EDA
 
 # COMMAND ----------
 
@@ -30,7 +39,7 @@ df_nyc_weather = spark.read.format("delta").load(HISTORIC_WEATHER_DELTA_DIR)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Filtering the entire historical dataset for our assigned station. Creating two different subsets with assigned stations as start station and end station. Merging the two subsets for EDA.
+# MAGIC #### Filtering the entire historical dataset for our assigned station. Creating two different subsets with assigned stations as start station and end station. Merging the two subsets for EDA.
 
 # COMMAND ----------
 
@@ -49,7 +58,7 @@ relevant_bike_df = bike_end.union(bike_start)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Adding some transformations like date conversion and formatting.
+# MAGIC #### Adding some transformations like date conversion and formatting.
 
 # COMMAND ----------
 
@@ -73,7 +82,7 @@ df_nyc_weather = df_nyc_weather.withColumn('Hour', hour(df_nyc_weather.dt))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Examining the monthly trip trends.  
+# MAGIC ### ■ Examining the monthly trip trends.  
 # MAGIC Insights:  
 # MAGIC   - Trips are highest in the summer months post March, with the highest in June 2022(around 28K trips)
 # MAGIC   - Intuitively, the trips data is lower in the winter months as well.
@@ -89,7 +98,7 @@ fig.show()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Examining the hourly trip trends.  
+# MAGIC ### ■  Examining the hourly trip trends.  
 # MAGIC Insights:  
 # MAGIC   - Trips are highest during the afternoon up until late evening time periods. 
 # MAGIC   - It gradually decreases during the early morning and late night hours.
@@ -106,7 +115,7 @@ fig.show()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Examining the daily trip trends.  
+# MAGIC ### ■ Examining the daily trip trends.  
 # MAGIC Insights:  
 # MAGIC   - No specific pattern  other than the same trend observed in the monthly plot above
 
@@ -124,7 +133,7 @@ fig.show()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Examine the daily trend with the additional persepctive of the type of weekday, whether it is a weekday or weekend?  
+# MAGIC ### ■ Examine the daily trend with the additional persepctive of the type of weekday, whether it is a weekday or weekend?  
 # MAGIC Insights:  
 # MAGIC   - The trend on weekdays is higher than weekends usually, however this pattern is not constant and it varies month over month.
 
@@ -138,7 +147,52 @@ fig.show()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Examine the monthly trip patterns based on the bike type.  
+# MAGIC %md
+# MAGIC ### ■ Examine the trend of daily trips across the different days of week.
+# MAGIC  We are looking for this trends as different charts for each year. Given that we have complete data for 2022, it gives a better perspective of the day-wise trip trends.
+# MAGIC Insights:  
+# MAGIC   - Over all the three years, Saturday and Sunday are the most unpopular days of the week. Esp. Sunday has the lowest traffic overall.
+# MAGIC   - Wednesday is the most popular day in the week.
+# MAGIC   - To conclude, we can see that the station is very busy mid-week and comparatively lean on Sat/Sun and even Mon/Tue.
+
+# COMMAND ----------
+
+daily_trips["day_number"] = daily_trips.simple_dt.dt.dayofweek
+daily_trips["day_of_week"] = daily_trips.simple_dt.dt.day_name()
+daily_trips["year_trip"] = daily_trips.simple_dt.dt.year
+fig = make_subplots(rows=3,cols=1)
+#subplot for 2021
+fig.add_trace(
+            go.Bar(x = daily_trips[daily_trips.year_trip == 2021].sort_values(by="day_number")["day_of_week"],
+                   y = daily_trips[daily_trips.year_trip == 2021].sort_values(by="day_number")["#trips"],
+                   name = "Day-wise trip trend for 2021"),
+row=1,
+col=1
+)
+
+fig.add_trace(
+            go.Bar(x = daily_trips[daily_trips.year_trip == 2022].sort_values(by="day_number")["day_of_week"],
+                   y = daily_trips[daily_trips.year_trip == 2022].sort_values(by="day_number")["#trips"],
+                   name = "Day-wise trip trend for 2022"),
+row=2,
+col=1
+)
+
+fig.add_trace(
+            go.Bar(x = daily_trips[daily_trips.year_trip == 2023].sort_values(by="day_number")["day_of_week"],
+                   y = daily_trips[daily_trips.year_trip == 2023].sort_values(by="day_number")["#trips"],
+                   name = "Day-wise trip trend for 2023"),
+row=3,
+col=1
+)
+
+fig.update_layout(title_text="Daily Trips for each day",
+width=1200, height=1600)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### ■ Examine the monthly trip patterns based on the bike type.  
 # MAGIC Insights:
 # MAGIC   - There are mainly two types of bikes: Classic and Electric bikes
 # MAGIC   - There is an anomaly in data with a third bike type(docked bike) that is seen in the data for the month of June 2022 only.
@@ -156,7 +210,7 @@ fig.show()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Examine the monthly trip patterns based on the member type.
+# MAGIC ### ■ Examine the monthly trip patterns based on the member type.
 # MAGIC Insights:
 # MAGIC   - There are mainly two types of values : Casual/Members
 # MAGIC   - Across all the months, the majority of trips is encountered by members rather than casual trips.
@@ -193,7 +247,7 @@ final_df = daily_trips.join(weather,on="simple_dt")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Examine the correlation between the number of daily trips and weather.  
+# MAGIC ### ■ Examine the correlation between the number of daily trips and weather.  
 # MAGIC Insights:
 # MAGIC   - There are many pairs in the weather data which have correlation amongst themselves, avg_temp and avg_dew_point,etc
 # MAGIC   - Variables like Temp, dewpoint, etc have positive correlation with the #trips.
@@ -211,7 +265,7 @@ fig.show()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Examine the trends of daily trips and the daily feels_like trend  
+# MAGIC ### ■ Examine the trends of daily trips and weather 
 # MAGIC Insights:  
 # MAGIC   - The pattern is very intuitive, with higher feels-like value, there are higher number of trips.
 
@@ -287,7 +341,3 @@ import json
 
 # Return Success
 dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))
-
-# COMMAND ----------
-
-
